@@ -1,6 +1,10 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const axios = require('axios'); // New import for HTTP requests
+
+// Flask model server URL
+const MODEL_SERVER_URL = process.env.MODEL_SERVER_URL || 'http://localhost:5050';
 
 // Track indexing status
 let indexingStatus = {
@@ -137,8 +141,8 @@ exports.indexDocument = (req, res) => {
   }
 };
 
-// Query the RAG system
-exports.queryRag = (req, res) => {
+// Query the RAG system using the Flask model server
+exports.queryRag = async (req, res) => {  // Changed to async function
   try {
     const { query } = req.body;
     
@@ -165,56 +169,27 @@ exports.queryRag = (req, res) => {
       });
     }
 
-    // Run the Python retriever and generator scripts
-    const pythonProcess = spawn('python', [
-      path.join(__dirname, '../../rag/generator.py'),
-      query
-    ]);
-
-    let responseData = '';
-    let errorData = '';
-
-    pythonProcess.stdout.on('data', (data) => {
-      responseData += data.toString();
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      console.log(`Generator stderr output: ${output}`);
+    // Call the Flask model server API instead of spawning a Python process
+    try {
+      console.log(`Sending query to model server: ${MODEL_SERVER_URL}/query`);
+      const response = await axios.post(`${MODEL_SERVER_URL}/query`, {
+        query: query,
+        top_k: 5
+      });
       
-      // Only treat as error if it's an actual error message
-      if (output.includes('ERROR') || output.includes('Error:')) {
-        errorData += output;
-      }
-    });
-
-    pythonProcess.on('close', (code) => {
-      if (code === 0 && responseData) {
-        try {
-          const response = JSON.parse(responseData);
-          res.status(200).json({
-            success: true,
-            query,
-            response: response
-          });
-        } catch (e) {
-          res.status(200).json({
-            success: true,
-            query,
-            response: {
-              answer: responseData.trim(),
-              sources: []
-            }
-          });
-        }
-      } else {
-        res.status(500).json({
-          success: false,
-          message: 'Error generating response',
-          error: errorData || `Process exited with code ${code}`
-        });
-      }
-    });
+      res.status(200).json({
+        success: true,
+        query,
+        response: response.data.response
+      });
+    } catch (error) {
+      console.error('Error calling model server:', error.response?.data || error.message);
+      res.status(500).json({
+        success: false,
+        message: 'Error generating response',
+        error: error.response?.data?.message || error.message
+      });
+    }
   } catch (error) {
     console.error('Error querying RAG system:', error);
     res.status(500).json({

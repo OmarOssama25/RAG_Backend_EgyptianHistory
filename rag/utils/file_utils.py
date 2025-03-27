@@ -35,7 +35,7 @@ def load_json(file_path):
 
 def get_project_root():
     """Get the project root directory."""
-    return str(Path(__file__).parent.parent)
+    return str(Path(__file__).parent.parent.parent)
 
 def get_data_dir():
     """Get the data directory path."""
