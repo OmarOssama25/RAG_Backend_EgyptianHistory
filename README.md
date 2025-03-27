@@ -13,7 +13,6 @@ A Retrieval-Augmented Generation (RAG) system for querying large Egyptian histor
 ## System Architecture
 
 ```
-graph TD
     A[User Query] --> B[Flask API]
     B --> C[Retriever]
     C --> D[Vector Store]
@@ -38,4 +37,18 @@ The diagram shows:
    - `Gemini 2.0 LLM`: Response generator
    - `Response with Sources`: Final output with citations
 
-For platforms without Mermaid support, this will display as a code block but maintain the logical flow representation.
+## Prerequisites
+
+- Python 3.8+
+- Node.js 16+
+- Google Cloud account (for Gemini API)
+- GPU recommended (not required)
+
+## Installation
+
+1. **Clone the repository**
+
+'''
+git clone https://github.com/yourusername/egyptian-history-rag.git
+cd egyptian-history-rag
+'''
