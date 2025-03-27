@@ -48,7 +48,7 @@ The diagram shows:
 
 1. **Clone the repository**
 
-'''
+```
 git clone https://github.com/yourusername/egyptian-history-rag.git
 cd egyptian-history-rag
-'''
+```
