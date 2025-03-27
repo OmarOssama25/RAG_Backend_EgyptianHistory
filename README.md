@@ -21,4 +21,21 @@ graph TD
     D --> E
     E --> F[Response with Sources]
 ```
-```
+The diagram shows:
+
+1. **Flow Sequence**:
+   - User submits query to Flask API
+   - API routes request to Retriever
+   - Retriever searches Vector Store
+   - Results are passed to Gemini LLM
+   - LLM combines context and knowledge
+   - Final response with sources is returned
+
+2. **Key Components**:
+   - `Flask API`: Main request handler
+   - `Retriever`: Semantic search component
+   - `Vector Store`: Stored document embeddings
+   - `Gemini 2.0 LLM`: Response generator
+   - `Response with Sources`: Final output with citations
+
+For platforms without Mermaid support, this will display as a code block but maintain the logical flow representation.
