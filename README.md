@@ -4,7 +4,7 @@ A Retrieval-Augmented Generation (RAG) system for querying large Egyptian histor
 
 ## Key Features
 
-- **Gemini 2.0 Integration**: Uses Google's latest Gemini 2.0 model for high-quality responses
+- **Gemini 2.0 Integration**: Uses Google's latest Gemini 2.0 Flash model for high-quality responses
 - **Flask API**: Model services hosted locally for efficient reuse
 - **Large PDF Handling**: Optimized for 1000+ page documents
 - **Source Citation**: Provides references back to original document pages
@@ -34,7 +34,7 @@ The diagram shows:
    - `Flask API`: Main request handler
    - `Retriever`: Semantic search component
    - `Vector Store`: Stored document embeddings
-   - `Gemini 2.0 LLM`: Response generator
+   - `Gemini 2.0 Flash LLM`: Response generator
    - `Response with Sources`: Final output with citations
 
 ## Prerequisites
@@ -79,7 +79,7 @@ NODE_PORT=5000
 1. **First Terminal**:
 ```
 cd models
-python model_server.py
+python run model_server.py
 ```
 This will start:
 - Gemini 2.0 LLM service at `http://localhost:5050/llm`
@@ -169,7 +169,7 @@ Modify `config.json` to adjust system behavior:
 ├── model_server.py # Flask model services
 ├── models/
 │ ├── embedding.py # Embedding model wrapper
-│ └── llm.py # Gemini 2.0 interface
+│ └── llm.py # Gemini 2.0 Flash interface
 ├── rag/
 │ ├── indexer.py # PDF processing
 │ ├── retriever.py # Semantic search
