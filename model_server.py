@@ -59,6 +59,7 @@ def initialize_models():
     
     logger.info("All models initialized successfully!")
 
+# The rest of the file remains the same
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
