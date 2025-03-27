@@ -1,4 +1,4 @@
-# Egyptian History RAG System with Gemini 2.0
+# Egyptian History RAG System with Gemini 2.0 Flash
 
 A Retrieval-Augmented Generation (RAG) system for querying large Egyptian history PDF documents, powered by Gemini 2.0 for language generation and Sentence Transformers for embeddings.
 
