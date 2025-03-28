@@ -173,11 +173,12 @@ Modify `config.json` to adjust system behavior:
 │ ├── indexer.py # PDF processing
 │ ├── retriever.py # Semantic search
 │ └── generator.py # Response generation
+├── backend/
 ├── server.js # Main API server
-├── routes/
+│ ├── routes/
 │ └── api.js # API endpoints
-└── controllers/
-└── ragController.js # Business logic
+│└── controllers/
+│ └──ragController.js # Business logic
 ```
 
 
