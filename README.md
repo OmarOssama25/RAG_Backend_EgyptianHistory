@@ -78,8 +78,7 @@ NODE_PORT=5000
 
 1. **First Terminal**:
 ```
-cd models
-python run model_server.py
+python model_server.py
 ```
 This will start:
 - Gemini 2.0 LLM service at `http://localhost:5050/llm`
