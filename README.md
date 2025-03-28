@@ -174,11 +174,11 @@ Modify `config.json` to adjust system behavior:
 │ ├── retriever.py # Semantic search
 │ └── generator.py # Response generation
 ├── backend/
-├── server.js # Main API server
+│ ├── server.js # Main API server
 │ ├── routes/
-│ └── api.js # API endpoints
-│└── controllers/
-│ └──ragController.js # Business logic
+│ │ └── api.js # API endpoints
+│ ├── controllers/
+│ │ └──ragController.js # Business logic
 ```
 
 
