@@ -6,10 +6,16 @@ const apiRoutes = require('./routes/api');
 
 // Initialize express app
 const app = express();
-const PORT = process.env.PORT || 5000;
+// In backend/server.js
+const PORT = process.env.PORT || 3001; // Change from 5000 to 3001
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:3000', // Assuming frontend runs on port 3000
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 

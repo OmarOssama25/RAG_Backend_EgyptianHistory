@@ -7,9 +7,11 @@ const path = require('path');
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: function(req, file, cb) {
+    console.log("Processing upload - destination");
     cb(null, path.join(__dirname, '../../data/'));
   },
   filename: function(req, file, cb) {
+    console.log("Processing upload - filename:", file.originalname);
     cb(null, 'egyptian_history.pdf');
   }
 });
@@ -21,23 +23,23 @@ const upload = multer({
       return cb(new Error('Only PDF files are allowed!'), false);
     }
     cb(null, true);
-  },
-  limits: {
-    fileSize: 100 * 1024 * 1024 // 100MB max file size
   }
 });
 
-// Upload PDF route
 router.post('/upload', upload.single('pdf'), ragController.uploadPdf);
 
 // Index the uploaded PDF
 router.post('/index', ragController.indexDocument);
+
+router.get('/indexing-status', ragController.getIndexingStatus);
 
 // Query the RAG system
 router.post('/query', ragController.queryRag);
 
 // Get indexing status
 router.get('/status', ragController.getStatus);
+
+router.get('/documents', ragController.getDocuments);
 
 // Health check endpoint
 router.get('/health', (req, res) => {
