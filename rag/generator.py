@@ -28,9 +28,12 @@ class Generator:
         self.llm = LLMModel()
         self.retriever = Retriever(self.pdf_name)
     
+    # Find and replace the generate_prompt method with this enhanced version:
+
     def generate_prompt(self, query, context):
         """
         Generate a prompt for the LLM based on the query and context.
+        Enhanced to reduce hallucinations.
         
         Args:
             query (str): User query
@@ -49,15 +52,23 @@ class Generator:
             
             formatted_context += f"[Document {i+1}] (Page {page_num}):\n{text}\n\n"
         
-        # Create the prompt
-        prompt = f"""Answer the following question based on the provided context. If the answer cannot be found in the context, say so.
+        # Create the enhanced prompt with strict instructions
+        prompt = f"""Answer the following question based ONLY on the provided context. 
 
-Context:
-{formatted_context}
+    IMPORTANT INSTRUCTIONS:
+    1. If the exact answer is not explicitly stated in the context, respond with "I don't have enough information to answer this question."
+    2. Do not use any prior knowledge.
+    3. If information in the documents conflicts, acknowledge this in your answer.
+    4. NEVER make up information or infer beyond what is explicitly stated.
+    5. No redundant information, information only said once.
+    6. Don't ever ever mention sources to the user.
 
-Question: {query}
+    Context:
+    {formatted_context}
 
-Answer:"""
+    Question: {query}
+
+    Answer:"""
         
         return prompt
     

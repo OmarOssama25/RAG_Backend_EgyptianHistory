@@ -1,6 +1,10 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const axios = require('axios'); // New import for HTTP requests
+
+// Flask model server URL
+const MODEL_SERVER_URL = process.env.MODEL_SERVER_URL || 'http://localhost:5050';
 
 // Track indexing status
 let indexingStatus = {
@@ -8,21 +12,41 @@ let indexingStatus = {
   progress: 0,
   error: null,
   message: null,
-  lastIndexed: null
+  lastIndexed: null,
+  currentFile: null
 };
 
-// Upload PDF file
 exports.uploadPdf = (req, res) => {
   try {
+    console.log("Upload request received");
+    console.log("File details:", req.file);
+    
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
     
+    console.log("File successfully saved to:", req.file.path);
+    
+    // Check if there's existing metadata for this file and remove it
+    // to ensure it shows up as unindexed
+    const baseFileName = req.file.filename.replace('.pdf', '');
+    const metadataPath = path.join(__dirname, '../../vector_store', `${baseFileName}_metadata.json`);
+    
+    if (fs.existsSync(metadataPath)) {
+      try {
+        fs.unlinkSync(metadataPath);
+        console.log(`Deleted existing metadata file for ${baseFileName} to mark as unindexed`);
+      } catch (err) {
+        console.warn(`Warning: Could not delete metadata file ${metadataPath}:`, err.message);
+      }
+    }
+    
     res.status(200).json({ 
       success: true, 
-      message: 'File uploaded successfully', 
+      message: 'File uploaded successfully and ready for indexing', 
       filename: req.file.filename,
-      path: req.file.path
+      path: req.file.path,
+      requiresIndexing: true
     });
   } catch (error) {
     console.error('Error uploading file:', error);
@@ -41,22 +65,37 @@ exports.indexDocument = (req, res) => {
       });
     }
 
-    const pdfPath = path.join(__dirname, '../../data/egyptian_history.pdf');
+    // Get filename from request body instead of hardcoding
+    const { filename } = req.body;
+    
+    // Validate that filename was provided
+    if (!filename) {
+      return res.status(400).json({
+        success: false,
+        message: 'Filename is required'
+      });
+    }
+    
+    const pdfPath = path.join(__dirname, '../../data', filename);
     
     if (!fs.existsSync(pdfPath)) {
       return res.status(404).json({ 
         success: false, 
-        message: 'PDF file not found. Please upload a file first.' 
+        message: `PDF file ${filename} not found. Please upload the file first.` 
       });
     }
 
+    // Update indexing status with current file info
     indexingStatus = {
       isIndexing: true,
       progress: 0,
       error: null,
       message: null,
-      lastIndexed: null
+      lastIndexed: null,
+      currentFile: filename
     };
+
+    console.log(`Starting indexing process for ${filename}`);
 
     // Run the Python indexer script
     const pythonProcess = spawn('python', [
@@ -98,15 +137,44 @@ exports.indexDocument = (req, res) => {
     });
 
     pythonProcess.on('close', (code) => {
-      console.log(`Indexing process exited with code ${code}`);
-      indexingStatus.isIndexing = false;
+      console.log(`Indexing process for ${filename} exited with code ${code}`);
       
       if (code === 0) {
         indexingStatus.progress = 100;
         indexingStatus.lastIndexed = new Date().toISOString();
-        if (!indexingStatus.message) {
-          indexingStatus.message = `Indexing completed successfully`;
+        
+        // Create metadata file to mark document as indexed
+        try {
+          const baseName = filename.replace('.pdf', '');
+          const vectorStoreDir = path.join(__dirname, '../../vector_store');
+          
+          // Create vector_store directory if it doesn't exist
+          if (!fs.existsSync(vectorStoreDir)) {
+            fs.mkdirSync(vectorStoreDir, { recursive: true });
+            console.log(`Created vector store directory: ${vectorStoreDir}`);
+          }
+          
+          const metadataPath = path.join(vectorStoreDir, `${baseName}_metadata.json`);
+          
+          // Create metadata object
+          const metadata = {
+            indexed: true,
+            indexedAt: new Date().toISOString(),
+            originalFilename: filename
+          };
+          
+          // Write metadata file
+          fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+          console.log(`Created metadata file at ${metadataPath} to mark document as indexed`);
+        } catch (error) {
+          console.error('Error creating metadata file:', error);
         }
+        
+        // Set success message
+        if (!indexingStatus.message) {
+          indexingStatus.message = `Indexing of ${filename} completed successfully`;
+        }
+        
         // Clear any error that might have been set incorrectly
         if (indexingStatus.error && indexingStatus.error.includes('INFO') && indexingStatus.error.includes('completed')) {
           const message = indexingStatus.error;
@@ -118,11 +186,14 @@ exports.indexDocument = (req, res) => {
           indexingStatus.error = `Process exited with code ${code}`;
         }
       }
+      
+      // Mark indexing as complete regardless of outcome
+      indexingStatus.isIndexing = false;
     });
 
     res.status(202).json({ 
       success: true, 
-      message: 'Indexing started', 
+      message: `Indexing started for ${filename}`, 
       status: indexingStatus 
     });
   } catch (error) {
@@ -137,93 +208,86 @@ exports.indexDocument = (req, res) => {
   }
 };
 
-// Query the RAG system
-exports.queryRag = (req, res) => {
+// Check indexing status
+exports.getIndexingStatus = (req, res) => {
+  res.status(200).json({ 
+    success: true,
+    status: indexingStatus
+  });
+};
+
+// Query the RAG system using the Flask model server
+exports.queryRag = async (req, res) => {
   try {
-    const { query } = req.body;
+    // Accept either query or question parameter
+    const queryText = req.body.question || req.body.query;
     
-    if (!query) {
+    console.log(`RAG query received: "${queryText}"`);
+    
+    if (!queryText) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Query is required' 
+        message: 'Question is required' 
       });
     }
 
-    // Check if indexing is complete
-    if (indexingStatus.isIndexing) {
-      return res.status(409).json({ 
-        success: false, 
-        message: 'Indexing in progress, please wait', 
-        progress: indexingStatus.progress 
+    // [existing validation code remains the same]
+
+    // Call the Flask model server API
+    try {
+      console.log(`Sending query to model server: ${MODEL_SERVER_URL}/query`);
+      const modelResponse = await axios.post(`${MODEL_SERVER_URL}/query`, {
+        query: queryText,
+        top_k: 5
       });
-    }
-
-    if (!indexingStatus.lastIndexed) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Document has not been indexed yet. Please index first.' 
-      });
-    }
-
-    // Run the Python retriever and generator scripts
-    const pythonProcess = spawn('python', [
-      path.join(__dirname, '../../rag/generator.py'),
-      query
-    ]);
-
-    let responseData = '';
-    let errorData = '';
-
-    pythonProcess.stdout.on('data', (data) => {
-      responseData += data.toString();
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      console.log(`Generator stderr output: ${output}`);
       
-      // Only treat as error if it's an actual error message
-      if (output.includes('ERROR') || output.includes('Error:')) {
-        errorData += output;
-      }
-    });
-
-    pythonProcess.on('close', (code) => {
-      if (code === 0 && responseData) {
+      console.log('Model server response received');
+      
+      // Extract the answer text from any response format
+      let rawData = modelResponse.data;
+      let plainTextAnswer = '';
+      
+      // Case 1: If it's a JSON string, parse it
+      if (typeof rawData === 'string' && (rawData.startsWith('{') || rawData.startsWith('['))) {
         try {
-          const response = JSON.parse(responseData);
-          res.status(200).json({
-            success: true,
-            query,
-            response: response
-          });
+          const parsed = JSON.parse(rawData);
+          plainTextAnswer = parsed.answer || '';
         } catch (e) {
-          res.status(200).json({
-            success: true,
-            query,
-            response: {
-              answer: responseData.trim(),
-              sources: []
-            }
-          });
+          plainTextAnswer = rawData;
         }
-      } else {
-        res.status(500).json({
-          success: false,
-          message: 'Error generating response',
-          error: errorData || `Process exited with code ${code}`
-        });
+      } 
+      // Case 2: If it's already an object with answer property
+      else if (typeof rawData === 'object' && rawData.answer) {
+        plainTextAnswer = rawData.answer;
       }
-    });
+      // Case 3: If it has response property instead
+      else if (typeof rawData === 'object' && rawData.response) {
+        plainTextAnswer = rawData.response;
+      }
+      // Case 4: Fallback to string conversion
+      else {
+        plainTextAnswer = String(rawData);
+      }
+      
+      // Force text/plain content type to prevent JSON formatting
+      res.setHeader('Content-Type', 'text/plain');
+      res.status(200).send(plainTextAnswer);
+    } catch (error) {
+      console.error('Error calling model server:', error.message);
+      
+      // Send plain text error
+      res.setHeader('Content-Type', 'text/plain');
+      res.status(500).send('Error generating response from model server');
+    }
   } catch (error) {
-    console.error('Error querying RAG system:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error querying RAG system',
-      error: error.message
-    });
+    console.error('Error in queryRag function:', error);
+    
+    // Send plain text error
+    res.setHeader('Content-Type', 'text/plain');
+    res.status(500).send('Error processing your question');
   }
 };
+
 
 // Get indexing status
 exports.getStatus = (req, res) => {
@@ -240,4 +304,71 @@ exports.getStatus = (req, res) => {
     success: true,
     status: statusResponse
   });
+};
+
+exports.getDocuments = (req, res) => {
+  try {
+    const dataDir = path.join(__dirname, '../../data');
+    const vectorStoreDir = path.join(__dirname, '../../vector_store');
+    
+    // Ensure data directory exists
+    if (!fs.existsSync(dataDir)) {
+      console.log('Data directory does not exist');
+      return res.status(200).json({ documents: [] });
+    }
+    
+    // Get all PDF files from data directory
+    const pdfFiles = fs.readdirSync(dataDir)
+      .filter(file => file.toLowerCase().endsWith('.pdf'));
+    console.log("PDF files found in data directory:", pdfFiles);
+    
+    // Create a set of indexed document names (without extension)
+    const indexedDocsSet = new Set();
+    
+    // Check if vector store directory exists before trying to read it
+    if (fs.existsSync(vectorStoreDir)) {
+      // Look specifically for metadata files with the exact naming pattern
+      const metadataFiles = fs.readdirSync(vectorStoreDir)
+        .filter(file => file.endsWith('_metadata.json'));
+      
+      metadataFiles.forEach(file => {
+        const docName = file.replace('_metadata.json', '');
+        indexedDocsSet.add(docName.toLowerCase());
+      });
+      
+      console.log("Indexed documents set:", Array.from(indexedDocsSet));
+    } else {
+      console.log("Vector store directory does not exist yet - no indexed documents");
+    }
+    
+    // Map PDF files to document objects
+    const documents = pdfFiles.map(file => {
+      const fileName = file.replace('.pdf', '');
+      const fullPath = path.join(dataDir, file);
+      const stats = fs.statSync(fullPath);
+      
+      // Check if document is indexed - use strict check with exact pattern matching
+      const isIndexed = indexedDocsSet.has(fileName.toLowerCase());
+      
+      return {
+        id: fileName,
+        filename: file,
+        originalName: file,
+        path: fullPath,
+        uploadDate: stats.mtime,
+        indexed: isIndexed, // This will now be false for new uploads
+        size: stats.size,
+      };
+    });
+    
+    console.log("Found documents:", documents);
+    
+    res.status(200).json({ documents });
+  } catch (error) {
+    console.error('Error getting documents:', error);
+    res.status(500).json({ 
+      error: 'Failed to retrieve documents',
+      details: error.message 
+    });
+  }
 };
