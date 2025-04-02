@@ -49,8 +49,8 @@ The diagram shows:
 1. **Clone the repository**
 
 ```
-git clone https://github.com/yourusername/egyptian-history-rag.git
-cd egyptian-history-rag
+git clone https://github.com/OmarOssama25/RAG_Backend_EgyptianHistory.git
+cd RAG_Backend_EgyptianHistory
 ```
 
 2. **Install Python dependencies**
