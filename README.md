@@ -170,6 +170,7 @@ Modify `config.json` to adjust system behavior:
 │ ├── embedding.py # Embedding model wrapper
 │ └── llm.py # Gemini 2.0 Flash interface
 ├── rag/
+│ ├── classifier.py # Classify prompts either RAG related or Converstational
 │ ├── indexer.py # PDF processing
 │ ├── retriever.py # Semantic search
 │ └── generator.py # Response generation
