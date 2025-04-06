@@ -8,19 +8,20 @@ logger = logging.getLogger(__name__)
 
 class IntentClassifier:
     def __init__(self, llm=None):
-        """
-        Initialize the intent classifier.
-        
-        Args:
-            llm: LLM instance to use for classification (if None, one will be created)
-        """
         if llm is None:
-            # Import here to avoid circular imports
-            sys.path.append('..')
-            from models.llm import LLMModel
-            self.llm = LLMModel()
+            # Add project root to path
+            import os, sys
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            try:
+                from models.llm import LLMModel
+                self.llm = LLMModel()
+            except ImportError as e:
+                logger.error(f"Failed to import LLMModel: {e}")
+                from llm import LLMModel  # Try relative import as fallback
+                self.llm = LLMModel()
         else:
             self.llm = llm
+
     
     def classify(self, query):
         """
@@ -52,18 +53,18 @@ class IntentClassifier:
             
             # Extract category
             if "conversational" in response:
-                return "conversational"
+                return {"type": "conversational", "confidence": 0.9}
             elif "information-seeking" in response:
-                return "information-seeking"
+                return {"type": "information-seeking", "confidence": 0.9}
             else:
                 # Default to information-seeking for ambiguous cases
                 logger.warning(f"Ambiguous classification: {response}. Defaulting to information-seeking.")
-                return "information-seeking"
-                
+                return {"type": "information-seeking", "confidence": 0.6}
+                    
         except Exception as e:
             logger.error(f"Error classifying query: {str(e)}")
             # Default to information-seeking on error
-            return "information-seeking"
+            return {"type": "information-seeking", "confidence": 0.5}
 
 # For testing
 if __name__ == "__main__":
