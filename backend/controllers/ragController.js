@@ -143,32 +143,8 @@ exports.indexDocument = (req, res) => {
         indexingStatus.progress = 100;
         indexingStatus.lastIndexed = new Date().toISOString();
         
-        // Create metadata file to mark document as indexed
-        try {
-          const baseName = filename.replace('.pdf', '');
-          const vectorStoreDir = path.join(__dirname, '../../vector_store');
-          
-          // Create vector_store directory if it doesn't exist
-          if (!fs.existsSync(vectorStoreDir)) {
-            fs.mkdirSync(vectorStoreDir, { recursive: true });
-            console.log(`Created vector store directory: ${vectorStoreDir}`);
-          }
-          
-          const metadataPath = path.join(vectorStoreDir, `${baseName}_metadata.json`);
-          
-          // Create metadata object
-          const metadata = {
-            indexed: true,
-            indexedAt: new Date().toISOString(),
-            originalFilename: filename
-          };
-          
-          // Write metadata file
-          fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
-          console.log(`Created metadata file at ${metadataPath} to mark document as indexed`);
-        } catch (error) {
-          console.error('Error creating metadata file:', error);
-        }
+        // REMOVE THIS BLOCK - DO NOT CREATE METADATA FILE HERE
+        // The Python indexer script should create the proper metadata file with chunks
         
         // Set success message
         if (!indexingStatus.message) {
@@ -207,6 +183,7 @@ exports.indexDocument = (req, res) => {
     });
   }
 };
+
 
 // Check indexing status
 exports.getIndexingStatus = (req, res) => {

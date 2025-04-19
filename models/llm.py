@@ -53,14 +53,27 @@ class LLMModel:
         Load the model for inference.
         """
         try:
-            # Get API key using our secure method
-            self.api_key = get_api_key("GEMINI_API_KEY", prompt_if_missing=False)
-            
+            # Try custom loader first
+            try:
+                from rag.utils.env_loader import get_api_key
+                self.api_key = get_api_key("GEMINI_API_KEY", prompt_if_missing=False)
+            except ImportError:
+                # Fallback to direct environment variable
+                self.api_key = os.getenv("GEMINI_API_KEY")
+                
             # Check if API key is available
             if not self.api_key:
+                # Try loading from .env file directly
+                try:
+                    from dotenv import load_dotenv
+                    load_dotenv()
+                    self.api_key = os.getenv("GEMINI_API_KEY")
+                except ImportError:
+                    pass
+                    
+            if not self.api_key:
                 logger.error("GEMINI_API_KEY not available. Please set it in your environment or .env file")
-                return False
-                
+                return False           
             # First make sure required packages are installed
             try:
                 import google.generativeai as genai
