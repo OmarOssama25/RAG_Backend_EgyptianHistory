@@ -143,9 +143,6 @@ exports.indexDocument = (req, res) => {
         indexingStatus.progress = 100;
         indexingStatus.lastIndexed = new Date().toISOString();
         
-        // REMOVE THIS BLOCK - DO NOT CREATE METADATA FILE HERE
-        // The Python indexer script should create the proper metadata file with chunks
-        
         // Set success message
         if (!indexingStatus.message) {
           indexingStatus.message = `Indexing of ${filename} completed successfully`;
@@ -184,7 +181,6 @@ exports.indexDocument = (req, res) => {
   }
 };
 
-
 // Check indexing status
 exports.getIndexingStatus = (req, res) => {
   res.status(200).json({ 
@@ -208,8 +204,6 @@ exports.queryRag = async (req, res) => {
       });
     }
 
-    // [existing validation code remains the same]
-
     // Call the Flask model server API
     try {
       console.log(`Sending query to model server: ${MODEL_SERVER_URL}/query`);
@@ -220,51 +214,79 @@ exports.queryRag = async (req, res) => {
       
       console.log('Model server response received');
       
-      // Extract the answer text from any response format
-      let rawData = modelResponse.data;
-      let plainTextAnswer = '';
-      
-      // Case 1: If it's a JSON string, parse it
-      if (typeof rawData === 'string' && (rawData.startsWith('{') || rawData.startsWith('['))) {
-        try {
-          const parsed = JSON.parse(rawData);
-          plainTextAnswer = parsed.answer || '';
-        } catch (e) {
-          plainTextAnswer = rawData;
+      // Check if the response is in the expected format
+      if (modelResponse.data && typeof modelResponse.data === 'object') {
+        const { answer, sources, is_conversational } = modelResponse.data;
+        
+        // Format sources for better display
+        const formattedSources = sources.map(source => {
+          return {
+            reference: source.reference || "",
+            page: source.page,
+            text: source.text,
+            relevance: source.score ? Math.round(source.score * 100) + "%" : "N/A"
+          };
+        });
+        
+        // Return the enhanced response
+        return res.status(200).json({
+          success: true,
+          answer,
+          sources: formattedSources,
+          is_conversational: is_conversational || false
+        });
+      } else {
+        // Handle string or unexpected response formats
+        let rawData = modelResponse.data;
+        let plainTextAnswer = '';
+        
+        // Case 1: If it's a JSON string, parse it
+        if (typeof rawData === 'string' && (rawData.startsWith('{') || rawData.startsWith('['))) {
+          try {
+            const parsed = JSON.parse(rawData);
+            plainTextAnswer = parsed.answer || '';
+          } catch (e) {
+            plainTextAnswer = rawData;
+          }
+        } 
+        // Case 2: If it's already an object with answer property
+        else if (typeof rawData === 'object' && rawData.answer) {
+          plainTextAnswer = rawData.answer;
         }
-      } 
-      // Case 2: If it's already an object with answer property
-      else if (typeof rawData === 'object' && rawData.answer) {
-        plainTextAnswer = rawData.answer;
+        // Case 3: If it has response property instead
+        else if (typeof rawData === 'object' && rawData.response) {
+          plainTextAnswer = rawData.response;
+        }
+        // Case 4: Fallback to string conversion
+        else {
+          plainTextAnswer = String(rawData);
+        }
+        
+        // Return the plain text response
+        return res.status(200).json({
+          success: true,
+          answer: plainTextAnswer,
+          sources: [],
+          is_conversational: false
+        });
       }
-      // Case 3: If it has response property instead
-      else if (typeof rawData === 'object' && rawData.response) {
-        plainTextAnswer = rawData.response;
-      }
-      // Case 4: Fallback to string conversion
-      else {
-        plainTextAnswer = String(rawData);
-      }
-      
-      // Force text/plain content type to prevent JSON formatting
-      res.setHeader('Content-Type', 'text/plain');
-      res.status(200).send(plainTextAnswer);
     } catch (error) {
       console.error('Error calling model server:', error.message);
-      
-      // Send plain text error
-      res.setHeader('Content-Type', 'text/plain');
-      res.status(500).send('Error generating response from model server');
+      return res.status(500).json({
+        success: false,
+        message: 'Error generating response from model server',
+        error: error.message
+      });
     }
   } catch (error) {
     console.error('Error in queryRag function:', error);
-    
-    // Send plain text error
-    res.setHeader('Content-Type', 'text/plain');
-    res.status(500).send('Error processing your question');
+    return res.status(500).json({
+      success: false,
+      message: 'Error processing your question',
+      error: error.message
+    });
   }
 };
-
 
 // Get indexing status
 exports.getStatus = (req, res) => {

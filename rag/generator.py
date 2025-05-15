@@ -174,17 +174,36 @@ Answer:"""
             # Generate response
             answer = self.llm.generate(prompt)
             
-            # Format sources
+            # Format sources with improved attribution
             sources = []
-            for item in results:
+            for i, item in enumerate(results):
                 chunk = item["chunk"]
+                # Use original text if available (not the contextualized version)
+                display_text = chunk.get("original_text", chunk["text"])
+                
                 sources.append({
                     "page": chunk["page_num"],
-                    "text": chunk["text"][:200] + "..." if len(chunk["text"]) > 200 else chunk["text"]
+                    "text": display_text[:200] + "..." if len(display_text) > 200 else display_text,
+                    "reference": f"[{i+1}]",  # Add reference number for footnote-style citations
+                    "score": item["score"]
                 })
             
+            # Add footnote-style references to the answer
+            footnoted_answer = answer
+            for i, source in enumerate(sources):
+                ref_marker = f"[{i+1}]"
+                if ref_marker not in footnoted_answer:
+                    # Only add reference if it's not already in the answer
+                    relevant_text = source["text"][:30].replace("\n", " ")
+                    if relevant_text in answer:
+                        footnoted_answer = footnoted_answer.replace(
+                            relevant_text, 
+                            f"{relevant_text} {ref_marker}", 
+                            1
+                        )
+            
             return {
-                "answer": answer,
+                "answer": footnoted_answer,
                 "sources": sources,
                 "is_conversational": False
             }

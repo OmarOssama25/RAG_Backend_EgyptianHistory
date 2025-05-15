@@ -5,6 +5,7 @@ import numpy as np
 import json
 from pathlib import Path
 import traceback
+from models.reranker import Reranker
 
 # Add parent directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,7 +30,9 @@ class Retriever:
         self.top_k = top_k
         self.embedding_model = EmbeddingModel()
         self.vector_store_dir = get_vector_store_dir()
-        
+
+        self.reranker = Reranker()
+
         self.vector_file = os.path.join(self.vector_store_dir, f"{self.pdf_name}_vectors.npz")
         self.metadata_file = os.path.join(self.vector_store_dir, f"{self.pdf_name}_metadata.json")
         
@@ -123,7 +126,12 @@ class Retriever:
                 })
             
             logger.info(f"Found {len(results)} relevant chunks for query: '{query}'")
-            return results
+            
+            # Apply reranking to improve result relevance
+            reranked_results = self.reranker.rerank(query, results, top_k=top_k)
+            logger.info(f"Reranked {len(results)} results to {len(reranked_results)} results")
+            
+            return reranked_results
             
         except Exception as e:
             logger.error(f"Error searching: {str(e)}")

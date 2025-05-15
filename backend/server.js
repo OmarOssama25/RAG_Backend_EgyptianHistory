@@ -3,15 +3,19 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
 const apiRoutes = require('./routes/api');
+const authRoutes = require('./routes/auth');
+const connectDB = require('./config/database');
+require('dotenv').config();
 
-// Initialize express app
 const app = express();
-// In backend/server.js
-const PORT = process.env.PORT || 3001; // Change from 5000 to 3001
+const PORT = process.env.PORT || 3001;
+
+// Connect to database
+connectDB();
 
 // Middleware
 app.use(cors({
-  origin: 'http://localhost:3000', // Assuming frontend runs on port 3000
+  origin: 'http://localhost:3000',
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -22,7 +26,10 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // Serve static files if needed
 app.use(express.static(path.join(__dirname, 'public')));
 
-// API Routes
+// Auth routes
+app.use('/api/auth', authRoutes);
+
+// Main API routes
 app.use('/api', apiRoutes);
 
 // Basic route for testing
