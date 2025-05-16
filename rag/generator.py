@@ -102,7 +102,7 @@ class Generator:
         If either parameter is missing, respond with the appropriate error code:
         - If no city is mentioned or it's unclear: error=missing_city
         - If the city is not in Egypt: error=city_not_in_egypt
-        - If no day is mentioned or it's unclear: error=missing_day
+        - If no day is explicitly mentioned or it's unclear: error=missing_day
         """
         
         response = self.llm.generate(parameter_prompt, max_tokens=50).strip()
@@ -125,10 +125,17 @@ class Generator:
                 return {"error": "missing_city"}
             if "day" not in params:
                 return {"error": "missing_day"}
-                
+            
+            if "missing_city" in params["city"]:
+                return {"error": "missing_city"}
+            if "city_not_in_egypt" in params["city"]:
+                return {"error": "city_not_in_egypt"}
+            if "missing_day" in params["day"]:
+                return {"error": "missing_day"}
             return {
                 "city": params["city"],
-                "day": params["day"]
+                "day": params["day"],
+                "response": response
             }
         except Exception as e:
             logger.error(f"Error parsing parameters: {str(e)}")
@@ -293,7 +300,7 @@ ANSWER:"""
                 
                 return {
                     "answer": error_msg,
-                    "query_type": "schedule-seeking"
+                    "query_type": "schedule-seeking",
                 }
             
             # Step 3: Get relevant location data from the retriever
@@ -302,7 +309,8 @@ ANSWER:"""
             if not results or len(results) == 0:
                 return {
                     "answer": f"I don't have information about monuments or locations in {parameters['city']}. Could you try another Egyptian city?",
-                    "query_type": "schedule-seeking"
+                    "query_type": "schedule-seeking",
+                    "response": parameters["response"]
                 }
             
             # Step 4: Create an optimized schedule using extracted parameters and location data
@@ -334,14 +342,15 @@ ANSWER:"""
                 "answer": schedule_response,
                 "city": parameters["city"],
                 "day": parameters["day"],
-                "query_type": "schedule-seeking"
+                "query_type": "schedule-seeking",
+                "response": parameters["response"]
             }
             
         except Exception as e:
             logger.error(f"Error generating schedule: {str(e)}")
             return {
                 "answer": f"I couldn't create a schedule at this time. Please try again with specific Egyptian city and day information.",
-                "query_type": "schedule-seeking"
+                "query_type": "schedule-seeking",
             }
 
     def generate_response(self, query, conversation_history=None, top_k=5):
