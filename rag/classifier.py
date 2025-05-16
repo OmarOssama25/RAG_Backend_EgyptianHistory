@@ -25,13 +25,13 @@ class IntentClassifier:
     
     def classify(self, query):
         """
-        Classify the user query as conversational or information-seeking.
+        Classify the user query as conversational, information-seeking, or schedule-seeking.
         
         Args:
             query (str): User query
             
         Returns:
-            str: "conversational" or "information-seeking"
+            str: "conversational", "information-seeking", or "schedule-seeking"
         """
         try:
             # Create classification prompt
@@ -39,10 +39,11 @@ class IntentClassifier:
             You are an AI assistant designed to classify user messages into exactly ONE of these categories:
             1. Conversational: Greetings, small talk, personal questions, opinions, etc.
             2. Information-Seeking: Questions requiring document search or specific knowledge about Egyptian history
+            3. Schedule-Seeking: Queries requesting a schedule to visit a number of areas in a period of time.
             
             User message: "{query}"
             
-            Respond with just the category name: either "conversational" or "information-seeking".
+            Respond with just the category name: "conversational", "information-seeking", or "schedule-seeking".
             """
             
             # Get classification from model
@@ -56,6 +57,8 @@ class IntentClassifier:
                 return {"type": "conversational", "confidence": 0.9}
             elif "information-seeking" in response:
                 return {"type": "information-seeking", "confidence": 0.9}
+            elif "schedule-seeking" in response:
+                return {"type": "schedule-seeking", "confidence": 0.9}
             else:
                 # Default to information-seeking for ambiguous cases
                 logger.warning(f"Ambiguous classification: {response}. Defaulting to information-seeking.")

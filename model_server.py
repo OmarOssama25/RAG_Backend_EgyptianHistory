@@ -50,7 +50,7 @@ def initialize_models():
     llm_model.load_model()
     
     # Initialize retriever and generator
-    retriever = Retriever("egyptian_history")
+    retriever = Retriever("egyptian_history", "monument_data")
     retriever.embedding_model = embedding_model  # Share the already loaded model
     
     generator = Generator("egyptian_history")

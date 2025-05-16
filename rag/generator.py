@@ -17,35 +17,47 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 class Generator:
-    def __init__(self, pdf_name=None):
+    def __init__(self, pdf_name=None, times_name=None):
         """
         Initialize the generator.
         
         Args:
             pdf_name (str): Name of the PDF file (without extension)
+            times_name (str): Name of the times/schedule data file (without extension)
         """
         self.pdf_name = pdf_name or "egyptian_history"
+        self.times_name = times_name or "monument_data"
         self.llm = LLMModel()
-        self.retriever = Retriever(self.pdf_name)
+        self.retriever = Retriever(self.pdf_name, self.times_name)
     
     def classify_intent(self, query):
         """
-        Classify the user query as conversational or information-seeking.
+        Classify the user query as conversational, information-seeking, or schedule-seeking.
         
         Args:
             query (str): User query
             
         Returns:
-            str: "conversational" or "information-seeking"
+            str: "conversational", "information-seeking", or "schedule-seeking".
         """
         classification_prompt = f"""
-        You are an AI assistant designed to classify user messages into exactly ONE of these categories:
-        1. Conversational: Greetings, small talk, personal questions, opinions, etc.
-        2. Information-Seeking: Questions requiring document search or specific knowledge about Egyptian history
+        Task: Classify the user query into exactly ONE category.
         
-        User message: "{query}"
+        Categories:
+        - "conversational": General chat, greetings, small talk, personal questions, opinions
+        - "information-seeking": Questions about Egyptian history, facts, or specific knowledge that requires document search
+        - "schedule-seeking": Requests for visiting schedules, planning a trip, or itinerary suggestions for Egyptian monuments/locations
         
-        Respond with just the category name: either "conversational" or "information-seeking".
+        Examples:
+        - "Hello, how are you?" → "conversational"
+        - "Tell me about Egyptian pyramids" → "information-seeking"
+        - "What's a good schedule for visiting Cairo on Sunday?" → "schedule-seeking"
+        - "Can you help me plan a trip to Alexandria on Tuesday?" → "schedule-seeking"
+        - "When was the Great Pyramid built?" → "information-seeking"
+        
+        User query: "{query}"
+        
+        Classification (respond with exactly one word - conversational, information-seeking, or schedule-seeking):
         """
         
         # Get classification from model
@@ -58,9 +70,69 @@ class Generator:
         if "conversational" in response:
             logger.info(f"Query classified as conversational: {query}")
             return "conversational"
+        elif "schedule-seeking" in response:
+            logger.info(f"Query classified as schedule-seeking: {query}")
+            return "schedule-seeking"
         else:
             logger.info(f"Query classified as information-seeking: {query}")
             return "information-seeking"
+    
+    def get_schedule_parameters(self, query):
+        """
+        Extract filter parameters from schedule-seeking query.
+        
+        Args:
+            query (str): User query
+            
+        Returns:
+            dict: Contains 'city' and 'day' keys if successful, or 'error' key if failed
+        """
+        
+        parameter_prompt = f"""
+        Extract the following parameters from the user's query about visiting Egyptian monuments or locations:
+        
+        1. City: The Egyptian city mentioned in the query (e.g., Cairo, Alexandria, Luxor, Aswan, Giza)
+        2. Day: The day of the week mentioned (e.g., Monday, Tuesday, etc.)
+        
+        User query: "{query}"
+        
+        Format your response EXACTLY as follows with NO additional text:
+        city=<extracted city>;day=<extracted day>
+        
+        If either parameter is missing, respond with the appropriate error code:
+        - If no city is mentioned or it's unclear: error=missing_city
+        - If the city is not in Egypt: error=city_not_in_egypt
+        - If no day is mentioned or it's unclear: error=missing_day
+        """
+        
+        response = self.llm.generate(parameter_prompt, max_tokens=50).strip()
+        
+        # Parse response
+        if response.startswith("error="):
+            error_type = response.split("=")[1].strip()
+            return {"error": error_type}
+        
+        try:
+            # Convert "city=cairo;day=sunday" to {"city": "cairo", "day": "sunday"}
+            params = {}
+            for pair in response.split(";"):
+                if "=" in pair:
+                    key, value = pair.split("=", 1)
+                    params[key.strip().lower()] = value.strip().lower()
+            
+            # Validate required parameters
+            if "city" not in params:
+                return {"error": "missing_city"}
+            if "day" not in params:
+                return {"error": "missing_day"}
+                
+            return {
+                "city": params["city"],
+                "day": params["day"]
+            }
+        except Exception as e:
+            logger.error(f"Error parsing parameters: {str(e)}")
+            return {"error": "invalid_format"}
     
     def generate_conversational_response(self, query, conversation_history=None):
         """
@@ -78,8 +150,8 @@ class Generator:
         if conversation_history and len(conversation_history) > 0:
             formatted_history = "Previous conversation:\n"
             for exchange in conversation_history:
-                role = exchange["role"]
-                content = exchange["content"]
+                role = exchange.get("role", "")
+                content = exchange.get("content", "")
                 if role == "user":
                     formatted_history += f"Human: {content}\n"
                 else:
@@ -88,7 +160,7 @@ class Generator:
         
         # Create the prompt
         prompt = f"""You are a friendly Egyptian history expert assistant. Respond conversationally to the following message.
-        Do not mention documents or searching for information, just respond naturally as in a conversation.
+        Your tone should be warm and helpful. Focus on creating a natural conversation flow.
 
         {formatted_history}
         Human: {query}
@@ -101,7 +173,7 @@ class Generator:
         return {
             "answer": answer,
             "sources": [],
-            "is_conversational": True
+            "query_type": "conversational"
         }
     
     def generate_prompt(self, query, context):
@@ -120,29 +192,29 @@ class Generator:
         formatted_context = ""
         for i, item in enumerate(context):
             chunk = item["chunk"]
-            score = item["score"]
             text = chunk["text"]
-            page_num = chunk["page_num"]
+            page_num = chunk.get("page_num", "N/A")
             
             formatted_context += f"[Document {i+1}] (Page {page_num}):\n{text}\n\n"
         
         # Create the enhanced prompt with strict instructions
-        prompt = f"""Answer the following question based ONLY on the provided context. 
+        prompt = f"""You are an expert on Egyptian history answering a question based on specific documents.
 
-IMPORTANT INSTRUCTIONS:
-1. If the exact answer is not explicitly stated in the context, respond with "I don't find specific information about this in the Egyptian history documents."
-2. Do not use any prior knowledge.
-3. If information in the documents conflicts, acknowledge this in your answer.
-4. NEVER make up information or infer beyond what is explicitly stated.
-5. No redundant information, information only said once.
-6. Don't ever ever mention sources to the user.
+TASK: Answer the following question using ONLY information from the provided context.
 
-Context:
+CONTEXT:
 {formatted_context}
 
-Question: {query}
+GUIDELINES:
+- Answer based ONLY on the provided context documents
+- If the information isn't in the context, say: "I don't find specific information about this in the Egyptian history documents."
+- Avoid mentioning the sources or documents in your answer
+- Focus on providing accurate, concise information
+- If information conflicts between sources, acknowledge this in your answer
 
-Answer:"""
+QUESTION: {query}
+
+ANSWER:"""
         
         return prompt
     
@@ -165,7 +237,7 @@ Answer:"""
                 return {
                     "answer": "I couldn't find any relevant information about this in the Egyptian history documents.",
                     "sources": [],
-                    "is_conversational": False
+                    "query_type": "information-seeking"
                 }
             
             # Generate prompt
@@ -179,26 +251,102 @@ Answer:"""
             for item in results:
                 chunk = item["chunk"]
                 sources.append({
-                    "page": chunk["page_num"],
+                    "page": chunk.get("page_num", "N/A"),
                     "text": chunk["text"][:200] + "..." if len(chunk["text"]) > 200 else chunk["text"]
                 })
             
             return {
                 "answer": answer,
                 "sources": sources,
-                "is_conversational": False
+                "query_type": "information-seeking"
             }
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
             return {
                 "answer": f"An error occurred: {str(e)}",
                 "sources": [],
-                "is_conversational": False
+                "query_type": "information-seeking"
             }
     
+    def generate_schedule_response(self, query):
+        """
+        Generate a schedule response for Egyptian monument visits.
+        
+        Args:
+            query (str): User query
+            
+        Returns:
+            dict: Response with schedule information or error
+        """
+        try:
+            # Step 1: Extract parameters from query
+            parameters = self.get_schedule_parameters(query)
+            
+            # Step 2: Handle parameter errors
+            if "error" in parameters:
+                error_msg = {
+                    "missing_city": "I need to know which Egyptian city you want to visit. Could you specify the city?",
+                    "missing_day": "I need to know which day of the week you plan to visit. Could you specify the day?",
+                    "city_not_in_egypt": "I can only provide schedules for cities in Egypt. Please specify an Egyptian city.",
+                    "invalid_format": "I couldn't understand your request. Please specify which Egyptian city and day you want to visit."
+                }.get(parameters["error"], "There was an error understanding your request.")
+                
+                return {
+                    "answer": error_msg,
+                    "query_type": "schedule-seeking"
+                }
+            
+            # Step 3: Get relevant location data from the retriever
+            results = self.retriever.getTimes(query, parameters["city"])
+            
+            if not results or len(results) == 0:
+                return {
+                    "answer": f"I don't have information about monuments or locations in {parameters['city']}. Could you try another Egyptian city?",
+                    "query_type": "schedule-seeking"
+                }
+            
+            # Step 4: Create an optimized schedule using extracted parameters and location data
+            schedule_prompt = f"""
+            Create an optimized one-day tour schedule for visiting monuments in {parameters['city']} on {parameters['day']}.
+            
+            Available locations and their opening hours:
+            {json.dumps([{
+                "location": item["Location"],
+                "hours": item["Time"]
+            } for item in results], indent=2)}
+            
+            Follow these guidelines:
+            1. Start the day at 8:00 AM and end by 6:00 PM
+            2. Include 3-5 major attractions based on proximity
+            3. Allow appropriate travel time between locations (15-30 minutes)
+            4. Include a lunch break around noon (1 hour)
+            5. Allocate realistic visiting times for each location (1-2 hours)
+            6. Consider the opening hours of each location
+            7. You are a friendly tour guide assistant. Do not ever mention anything about entries or guidelines and speak like a normal human would. 
+
+            Format your response as a complete schedule with times, locations, and brief descriptions.
+            """
+            
+            # Generate the schedule
+            schedule_response = self.llm.generate(schedule_prompt)
+            
+            return {
+                "answer": schedule_response,
+                "city": parameters["city"],
+                "day": parameters["day"],
+                "query_type": "schedule-seeking"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating schedule: {str(e)}")
+            return {
+                "answer": f"I couldn't create a schedule at this time. Please try again with specific Egyptian city and day information.",
+                "query_type": "schedule-seeking"
+            }
+
     def generate_response(self, query, conversation_history=None, top_k=5):
         """
-        Generate a response to the query using either conversational or RAG approach.
+        Generate a response to the query using either conversational, information-seeking or schedule-seeking approach.
         
         Args:
             query (str): User query
@@ -215,26 +363,32 @@ Answer:"""
             # Generate appropriate response based on intent
             if intent == "conversational":
                 return self.generate_conversational_response(query, conversation_history)
+            elif intent == "information-seeking":
+                return self.generate_information_response(query, top_k)
+            elif intent == "schedule-seeking":
+                return self.generate_schedule_response(query)
             else:
+                # Fallback to information-seeking as default
                 return self.generate_information_response(query, top_k)
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
             return {
-                "answer": f"An error occurred: {str(e)}",
+                "answer": f"I'm sorry, I encountered an error while processing your request. Could you try rephrasing your question?",
                 "sources": [],
-                "is_conversational": False
+                "query_type": "error"
             }
 
 def main():
     parser = argparse.ArgumentParser(description="Generate a response to a query using RAG")
     parser.add_argument("query", help="User query")
     parser.add_argument("--pdf-name", help="Name of the PDF file (without extension)")
+    parser.add_argument("--times-name", help="Name of the file containing the time database (without extension)")
     parser.add_argument("--top-k", type=int, default=5, help="Number of top results to retrieve")
     parser.add_argument("--conversation-history", help="JSON string of conversation history")
     
     args = parser.parse_args()
     
-    generator = Generator(pdf_name=args.pdf_name)
+    generator = Generator(pdf_name=args.pdf_name, times_name=args.times_name)
     
     # Parse conversation history if provided
     conversation_history = None
