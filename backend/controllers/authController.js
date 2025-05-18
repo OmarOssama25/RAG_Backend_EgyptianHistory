@@ -10,13 +10,19 @@ exports.signup = async (req, res) => {
     if (user) return res.status(409).json({ message: 'Email already in use.' });
 
     user = new User({ email, password });
-    const token = user.generateVerificationToken();
+    // Auto-verify for development
+    user.verified = true;
     await user.save();
 
-    const link = `http://localhost:3000/api/auth/verify/${token}`;
-    await sendVerificationEmail(email, link);
+    // Skip email verification
+    // const link = `http://localhost:3000/api/auth/verify/${token}`;
+    // await sendVerificationEmail(email, link);
 
-    res.status(201).json({ message: 'Signup successful. Please verify your email.' });
+    res.status(201).json({ 
+      message: 'Signup successful. Account automatically verified for development.',
+      // Optionally return a token so they can login immediately
+      token: jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' })
+    });
   } catch (err) {
     res.status(500).json({ message: 'Signup failed.', error: err.message });
   }

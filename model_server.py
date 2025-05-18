@@ -85,9 +85,10 @@ def query():
         
         query_text = data['query']
         top_k = data.get('top_k', 5)
+        chat_history = data.get('chat_history', [])
         
-        # Generate response
-        response = generator.generate_response(query_text, top_k=top_k)
+        # Generate response with chat history
+        response = generator.generate_response(query_text, top_k=top_k, chat_history=chat_history)
         
         return jsonify({
             "success": True,

@@ -4,6 +4,7 @@ import logging
 import json
 import argparse
 from pathlib import Path
+from typing import List, Dict
 
 # Add parent directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -104,47 +105,58 @@ class Generator:
             "is_conversational": True
         }
     
-    def generate_prompt(self, query, context):
+    def create_enhanced_prompt(self,query, retrieved_documents, chat_history_str=""):
         """
-        Generate a prompt for the LLM based on the query and context.
-        Enhanced to reduce hallucinations.
+        Create an enhanced prompt template that includes chat history and retrieved documents.
         
         Args:
-            query (str): User query
-            context (list): List of context chunks
+            query (str): The current user query
+            retrieved_documents (list): List of retrieved document chunks with text and metadata
+            chat_history_str (str): Formatted chat history string
             
         Returns:
-            str: Formatted prompt
+            str: Complete prompt for the LLM
         """
-        # Format context
-        formatted_context = ""
-        for i, item in enumerate(context):
-            chunk = item["chunk"]
-            score = item["score"]
-            text = chunk["text"]
-            page_num = chunk["page_num"]
-            
-            formatted_context += f"[Document {i+1}] (Page {page_num}):\n{text}\n\n"
-        
-        # Create the enhanced prompt with strict instructions
-        prompt = f"""Answer the following question based ONLY on the provided context. 
+        # System instructions
+        system_instructions = """You are an expert on Egyptian history providing accurate, detailed answers based on verified historical documents. 
+    Your responses should be informative, factual, and cite the specific sources from the provided context."""
 
-IMPORTANT INSTRUCTIONS:
-1. If the exact answer is not explicitly stated in the context, respond with "I don't find specific information about this in the Egyptian history documents."
-2. Do not use any prior knowledge.
-3. If information in the documents conflicts, acknowledge this in your answer.
-4. NEVER make up information or infer beyond what is explicitly stated.
-5. No redundant information, information only said once.
-6. Don't ever ever mention sources to the user.
+        # Format document context
+        document_context = ""
+        for i, doc in enumerate(retrieved_documents, 1):
+            page_num = doc.get('metadata', {}).get('page', 'Unknown')
+            text = doc.get('text', '')
+            document_context += f"[Document {i} - Page {page_num}]: {text}\n\n"
 
-Context:
-{formatted_context}
+        # Construct full prompt with clear separators
+        prompt = f"""
+    {system_instructions}
 
-Question: {query}
+    {'' if not chat_history_str else f'''=== PREVIOUS CONVERSATION ===
+    {chat_history_str}
 
-Answer:"""
-        
+    '''}=== RETRIEVED CONTEXT ===
+    {document_context}
+
+    === CURRENT QUERY ===
+    {query}
+
+    === INSTRUCTIONS ===
+    1. First, carefully read the retrieved context above
+    2. Compare retrieved information with any context from previous conversation
+    3. Verify all facts against the provided documents before including them
+    4. If information seems contradictory, prioritize the most reliable source and explain discrepancies
+    5. Your response must be clearly connected to the retrieved documents
+    6. Include important additional context that helps understanding, even if not directly asked
+    7. Answer in a conversational, engaging tone
+    8. Cite specific document numbers and page numbers when referencing facts
+    9. If the information to answer the query is not in the documents, state this clearly instead of inventing facts
+
+    Respond with a comprehensive answer based on the above instructions:
+    """
+
         return prompt
+
     
     def generate_information_response(self, query, top_k=5):
         """
@@ -174,36 +186,17 @@ Answer:"""
             # Generate response
             answer = self.llm.generate(prompt)
             
-            # Format sources with improved attribution
+            # Format sources
             sources = []
-            for i, item in enumerate(results):
+            for item in results:
                 chunk = item["chunk"]
-                # Use original text if available (not the contextualized version)
-                display_text = chunk.get("original_text", chunk["text"])
-                
                 sources.append({
                     "page": chunk["page_num"],
-                    "text": display_text[:200] + "..." if len(display_text) > 200 else display_text,
-                    "reference": f"[{i+1}]",  # Add reference number for footnote-style citations
-                    "score": item["score"]
+                    "text": chunk["text"][:200] + "..." if len(chunk["text"]) > 200 else chunk["text"]
                 })
             
-            # Add footnote-style references to the answer
-            footnoted_answer = answer
-            for i, source in enumerate(sources):
-                ref_marker = f"[{i+1}]"
-                if ref_marker not in footnoted_answer:
-                    # Only add reference if it's not already in the answer
-                    relevant_text = source["text"][:30].replace("\n", " ")
-                    if relevant_text in answer:
-                        footnoted_answer = footnoted_answer.replace(
-                            relevant_text, 
-                            f"{relevant_text} {ref_marker}", 
-                            1
-                        )
-            
             return {
-                "answer": footnoted_answer,
+                "answer": answer,
                 "sources": sources,
                 "is_conversational": False
             }
@@ -214,28 +207,84 @@ Answer:"""
                 "sources": [],
                 "is_conversational": False
             }
-    
-    def generate_response(self, query, conversation_history=None, top_k=5):
+            
+    def generate_response(self, query, top_k=5, chat_history=None):
         """
-        Generate a response to the query using either conversational or RAG approach.
+        Generate a response using the RAG pipeline with chat history and query enhancement.
         
         Args:
-            query (str): User query
-            conversation_history (list): Previous conversation exchanges
-            top_k (int): Number of top results to retrieve
-            
+            query: User query text
+            top_k: Number of documents to retrieve
+            chat_history: Optional chat history from MongoDB
+        
         Returns:
-            dict: Response with answer and sources
+            Generated response with sources
         """
         try:
             # Classify the query intent
             intent = self.classify_intent(query)
             
+            # Process chat history if provided
+            formatted_history = ""
+            selected_history = []
+            if chat_history:
+                # Apply window selection to get most relevant messages
+                selected_history = self.window_selection(chat_history)
+                # Format the selected history into a string
+                formatted_history = self.history_handler(selected_history)
+                logger.info(f"Processed {len(selected_history)} messages from chat history")
+            
             # Generate appropriate response based on intent
             if intent == "conversational":
-                return self.generate_conversational_response(query, conversation_history)
+                return self.generate_conversational_response(query, formatted_history)
             else:
-                return self.generate_information_response(query, top_k)
+                # Enhance query with context if we have chat history
+                original_query = query
+                if chat_history and len(selected_history) > 0:
+                    query = self.enhance_query_with_context(original_query, selected_history, self.llm)
+                    logger.info(f"Enhanced query: '{original_query}' → '{query}'")
+                
+                # Use enhanced query for retrieval
+                search_results = self.retriever.search(query, top_k=top_k)
+                
+                # Convert search results to expected format
+                retrieved_documents = []
+                for result in search_results:
+                    chunk = result["chunk"]
+                    retrieved_documents.append({
+                        "text": chunk.get("text", ""),
+                        "metadata": {
+                            "page": chunk.get("page_num", "Unknown"),
+                            "source": self.retriever.pdf_name
+                        }
+                    })
+                
+                # Create enhanced prompt with chat history and retrieved documents
+                enhanced_prompt = self.create_enhanced_prompt(
+                    query=query,
+                    retrieved_documents=retrieved_documents,
+                    chat_history_str=formatted_history
+                )
+                
+                # Generate response using the enhanced prompt
+                answer = self.llm.generate(enhanced_prompt)
+                
+                # Extract sources from retrieved documents for citation
+                sources = [
+                    {
+                        "page": doc["metadata"]["page"],
+                        "text": doc["text"][:100] + "..." if len(doc["text"]) > 100 else doc["text"]
+                    }
+                    for doc in retrieved_documents
+                ]
+                
+                return {
+                    "answer": answer,
+                    "sources": sources,
+                    "is_conversational": False,
+                    "original_query": original_query if query != original_query else None,
+                    "enhanced_query": query if query != original_query else None
+                }
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
             return {
@@ -243,6 +292,179 @@ Answer:"""
                 "sources": [],
                 "is_conversational": False
             }
+
+    def enhance_query_with_context(self, query, chat_history, llm):
+        """
+        Enhance queries with contextual information from chat history.
+        
+        Args:
+            query (str): Current user query
+            chat_history (list): List of previous messages with role and content
+            llm: LLM instance for query enhancement
+            
+        Returns:
+            str: Enhanced query with contextual information
+        """
+        # Check if we have enough history to provide context
+        if not chat_history or len(chat_history) < 2:
+            return query
+        
+        # Check if the query likely needs enhancement (contains pronouns or references)
+        ambiguous_terms = ['it', 'this', 'that', 'they', 'them', 'he', 'she', 'his', 'her', 'their', 'these', 'those']
+        short_query_words = len(query.split()) < 7
+        has_ambiguous_terms = any(term in query.lower().split() for term in ambiguous_terms)
+        
+        needs_enhancement = short_query_words or has_ambiguous_terms
+        
+        if not needs_enhancement:
+            return query
+            
+        # Format conversation history
+        formatted_history = ""
+        # Only use last 3 turns of conversation (3 pairs of user/assistant)
+        recent_history = chat_history[-6:] if len(chat_history) > 6 else chat_history
+        
+        for msg in recent_history:
+            role = msg['role']
+            content = msg['content']
+            formatted_history += f"{role.capitalize()}: {content}\n"
+        
+        # Create prompt for query enhancement
+        enhancement_prompt = f"""
+    You are a query enhancement system that rewrites ambiguous follow-up questions into self-contained queries.
+    The user is having a conversation about Egyptian history. Below is the conversation history:
+
+    {formatted_history}
+
+    User's latest query: "{query}"
+
+    This query may contain references to entities mentioned in previous turns. 
+    Your task is to rewrite this query into a self-contained question that explicitly includes all relevant context.
+    Don't add any explanations, just return the rewritten query.
+
+    Examples:
+    - "When did he rule?" → "When did Pharaoh Khufu, builder of the Great Pyramid of Giza, rule Egypt?"
+    - "How tall was it?" → "How tall was the Great Pyramid of Giza when initially built?"
+    - "Tell me more about them" → "Tell me more about the pyramids of Giza mentioned earlier"
+
+    Rewritten query:
+    """
+        
+        # Get enhanced query from LLM
+        enhanced_query = llm.generate(enhancement_prompt).strip()
+        
+        # Don't let enhanced queries get too long
+        if len(enhanced_query) > 200:
+            enhanced_query = enhanced_query[:200]
+            
+        return enhanced_query
+
+
+    def history_handler(self,chat_history: List[Dict], max_turns: int = 3) -> str:
+        """
+        Convert JSON chat history from MongoDB into a formatted string representation.
+        Format each message as 'User: {content}' or 'Assistant: {content}'.
+        Apply window selection to include only the last max_turns pairs (user+assistant).
+
+        Args:
+            chat_history (List[Dict]): List of messages with 'role' and 'content'.
+            max_turns (int): Number of recent conversation turns to include.
+
+        Returns:
+            str: Formatted chat history string.
+        """
+        if not chat_history:
+            return ""
+            
+        # Filter to last max_turns * 2 messages (each turn has user and assistant)
+        relevant_messages = chat_history[-max_turns*2:]
+
+        formatted_messages = []
+        for msg in relevant_messages:
+            role = msg.get('role', '').lower()
+            content = msg.get('content', '')
+            if role == 'user':
+                formatted_messages.append(f"User: {content}")
+            elif role == 'assistant':
+                formatted_messages.append(f"Assistant: {content}")
+            else:
+                # Unknown role, just add content
+                formatted_messages.append(content)
+
+        # Join messages with newlines
+        return '\n'.join(formatted_messages)
+    
+    def window_selection(self,chat_history, max_turns=3, max_tokens=1000):
+        """
+        Select the most relevant conversation history using a sliding window approach.
+        
+        Args:
+            chat_history (list): List of messages with 'role' and 'content' keys
+            max_turns (int): Maximum number of conversation turns to include
+            max_tokens (int): Maximum total tokens allowed in selected history
+            
+        Returns:
+            list: Selected and possibly truncated messages in chronological order
+        """
+        if not chat_history:
+            return []
+            
+        # Try to use tiktoken for accurate token counting if available
+        try:
+            import tiktoken
+            encoding = tiktoken.get_encoding("cl100k_base")
+            
+            def count_tokens(text):
+                return len(encoding.encode(text))
+        except ImportError:
+            # Fallback to word count approximation if tiktoken not available
+            def count_tokens(text):
+                return len(text.split())
+        
+        selected_messages = []
+        total_tokens = 0
+        turns_collected = 0
+        
+        # Process messages from newest to oldest
+        for msg in reversed(chat_history):
+            # Get message content and count tokens
+            content = msg.get('content', '')
+            tokens = count_tokens(content)
+            
+            # Handle long single messages by truncating
+            if tokens > max_tokens // 2:  # Allow at most half of total tokens for one message
+                if "tiktoken" in locals():
+                    # Accurate truncation with tiktoken
+                    encoded = encoding.encode(content)
+                    truncated_encoded = encoded[:max_tokens // 2]
+                    truncated_content = encoding.decode(truncated_encoded)
+                else:
+                    # Fallback word-based truncation
+                    words = content.split()
+                    truncated_content = ' '.join(words[:max_tokens // 2]) + "... [truncated]"
+                
+                msg = msg.copy()  # Create a copy to avoid modifying original
+                msg['content'] = truncated_content
+                tokens = count_tokens(truncated_content)
+            
+            # Check if adding this message would exceed token limit
+            if total_tokens + tokens > max_tokens:
+                break
+            
+            # Add message to selected list
+            selected_messages.append(msg)
+            total_tokens += tokens
+            
+            # Count turns (user messages)
+            if msg.get('role', '').lower() == 'user':
+                turns_collected += 1
+                # Stop if we've collected enough turns
+                if turns_collected >= max_turns:
+                    break
+        
+        # Reverse back to chronological order
+        selected_messages.reverse()
+        return selected_messages
 
 def main():
     parser = argparse.ArgumentParser(description="Generate a response to a query using RAG")

@@ -3,6 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const axios = require('axios'); // New import for HTTP requests
 
+const Message = require('../models/message');
+const Conversation = require('../models/conversation');
+
 // Flask model server URL
 const MODEL_SERVER_URL = process.env.MODEL_SERVER_URL || 'http://localhost:5050';
 
@@ -143,6 +146,9 @@ exports.indexDocument = (req, res) => {
         indexingStatus.progress = 100;
         indexingStatus.lastIndexed = new Date().toISOString();
         
+        // REMOVE THIS BLOCK - DO NOT CREATE METADATA FILE HERE
+        // The Python indexer script should create the proper metadata file with chunks
+        
         // Set success message
         if (!indexingStatus.message) {
           indexingStatus.message = `Indexing of ${filename} completed successfully`;
@@ -181,6 +187,7 @@ exports.indexDocument = (req, res) => {
   }
 };
 
+
 // Check indexing status
 exports.getIndexingStatus = (req, res) => {
   res.status(200).json({ 
@@ -192,84 +199,118 @@ exports.getIndexingStatus = (req, res) => {
 // Query the RAG system using the Flask model server
 exports.queryRag = async (req, res) => {
   try {
-    // Accept either query or question parameter
     const queryText = req.body.question || req.body.query;
-    
+    const conversationId = req.body.conversationId;
+
     console.log(`RAG query received: "${queryText}"`);
-    
+
     if (!queryText) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Question is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Question is required'
       });
     }
 
-    // Call the Flask model server API
+    let chatHistory = [];
+    if (conversationId) {
+      try {
+        const messages = await Message.find({ conversationId })
+          .sort({ timestamp: -1 })
+          .limit(10);
+
+        chatHistory = messages.reverse().map(msg => ({
+          role: msg.role,
+          content: msg.content
+        }));
+
+        console.log(`Retrieved ${chatHistory.length} messages from history`);
+      } catch (error) {
+        console.error('Error fetching chat history:', error);
+      }
+    }
+
     try {
       console.log(`Sending query to model server: ${MODEL_SERVER_URL}/query`);
       const modelResponse = await axios.post(`${MODEL_SERVER_URL}/query`, {
         query: queryText,
-        top_k: 5
+        top_k: 5,
+        chat_history: chatHistory
       });
-      
+
       console.log('Model server response received');
-      
-      // Check if the response is in the expected format
-      if (modelResponse.data && typeof modelResponse.data === 'object') {
-        const { answer, sources, is_conversational } = modelResponse.data;
-        
-        // Format sources for better display
-        const formattedSources = sources.map(source => {
-          return {
-            reference: source.reference || "",
-            page: source.page,
-            text: source.text,
-            relevance: source.score ? Math.round(source.score * 100) + "%" : "N/A"
-          };
-        });
-        
-        // Return the enhanced response
+      const rawData = modelResponse.data;
+      console.log('Full model response:', JSON.stringify(rawData, null, 2));
+
+      let plainTextAnswer = '';
+      let sources = [];
+      let enhancedQuery = null;
+      let originalQuery = null;
+
+      if (rawData && rawData.response && typeof rawData.response === 'object') {
+        const response = rawData.response;
+
+        if (typeof response.answer === 'string') {
+          plainTextAnswer = response.answer;
+        } else {
+          plainTextAnswer = JSON.stringify(response.answer, null, 2);
+        }
+
+        sources = response.sources || [];
+        enhancedQuery = response.enhanced_query || null;
+        originalQuery = response.original_query || null;
+      } else {
+        plainTextAnswer = "I'm sorry, I couldn't generate a proper response. Please try again.";
+        console.log('Unexpected response structure:', JSON.stringify(rawData));
+      }
+
+      console.log('Plain text answer:', plainTextAnswer);
+
+      if (conversationId) {
+        try {
+          const conversation = await Conversation.findById(conversationId);
+          if (!conversation) {
+            console.warn(`Conversation ${conversationId} not found, cannot save messages`);
+          } else {
+            await Message.create({
+              conversationId,
+              role: 'user',
+              content: queryText
+            });
+
+            await Message.create({
+              conversationId,
+              role: 'assistant',
+              content: plainTextAnswer,
+              metadata: {
+                sources: sources,
+                enhanced_query: enhancedQuery,
+                original_query: originalQuery
+              }
+            });
+
+            conversation.updatedAt = Date.now();
+            await conversation.save();
+
+            console.log(`Saved query and response to conversation ${conversationId}`);
+          }
+        } catch (error) {
+          console.error('Error saving to conversation history:', error);
+        }
+      }
+
+      const isJsonFormat = req.query.format === 'json' || req.body.format === 'json';
+      if (isJsonFormat || !req.query.format) {
         return res.status(200).json({
-          success: true,
-          answer,
-          sources: formattedSources,
-          is_conversational: is_conversational || false
+          answer: plainTextAnswer,
+          sources: sources,
+          enhanced_query: enhancedQuery,
+          original_query: originalQuery
         });
       } else {
-        // Handle string or unexpected response formats
-        let rawData = modelResponse.data;
-        let plainTextAnswer = '';
-        
-        // Case 1: If it's a JSON string, parse it
-        if (typeof rawData === 'string' && (rawData.startsWith('{') || rawData.startsWith('['))) {
-          try {
-            const parsed = JSON.parse(rawData);
-            plainTextAnswer = parsed.answer || '';
-          } catch (e) {
-            plainTextAnswer = rawData;
-          }
-        } 
-        // Case 2: If it's already an object with answer property
-        else if (typeof rawData === 'object' && rawData.answer) {
-          plainTextAnswer = rawData.answer;
-        }
-        // Case 3: If it has response property instead
-        else if (typeof rawData === 'object' && rawData.response) {
-          plainTextAnswer = rawData.response;
-        }
-        // Case 4: Fallback to string conversion
-        else {
-          plainTextAnswer = String(rawData);
-        }
-        
-        // Return the plain text response
-        return res.status(200).json({
-          success: true,
-          answer: plainTextAnswer,
-          sources: [],
-          is_conversational: false
-        });
+        res.setHeader('Content-Type', 'text/plain');
+        return res.status(200).send(String(plainTextAnswer));
       }
+
     } catch (error) {
       console.error('Error calling model server:', error.message);
       return res.status(500).json({
@@ -278,6 +319,7 @@ exports.queryRag = async (req, res) => {
         error: error.message
       });
     }
+
   } catch (error) {
     console.error('Error in queryRag function:', error);
     return res.status(500).json({

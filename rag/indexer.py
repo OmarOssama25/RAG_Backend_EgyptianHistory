@@ -14,7 +14,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.embedding import EmbeddingModel
 from rag.utils import ensure_directory, get_vector_store_dir, chunk_list
-from rag.contextual_processor import ContextualProcessor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -36,7 +35,6 @@ class PDFIndexer:
         self.chunk_overlap = chunk_overlap
         self.batch_size = batch_size
         self.embedding_model = EmbeddingModel()
-        self.contextual_processor = ContextualProcessor()
         self.vector_store_dir = get_vector_store_dir()
         
         # Extract filename without extension for storing vectors
@@ -128,35 +126,6 @@ class PDFIndexer:
             logger.error(f"Error splitting text into chunks: {str(e)}")
             return []
     
-    def add_contextual_information(self, chunks, pages):
-        """
-        Add contextual information to chunks to improve retrieval.
-        
-        Args:
-            chunks (list): List of chunks with metadata
-            pages (list): Original page data
-            
-        Returns:
-            list: Enhanced chunks with contextual information
-        """
-        try:
-            logger.info("Adding contextual information to chunks")
-            
-            # Combine all text to provide document-level context
-            full_document_text = "\n\n".join([page["text"] for page in pages])
-            
-            enhanced_chunks = []
-            for chunk in tqdm(chunks, desc="Enhancing chunks with context"):
-                # Add contextual information to the chunk
-                contextualized_chunk = self.contextual_processor.add_context_to_chunk(chunk, full_document_text)
-                enhanced_chunks.append(contextualized_chunk)
-            
-            logger.info(f"Enhanced {len(enhanced_chunks)} chunks with contextual information")
-            return enhanced_chunks
-        except Exception as e:
-            logger.error(f"Error adding contextual information: {str(e)}")
-            return chunks  # Return original chunks if enhancement fails
-    
     def create_embeddings(self, chunks):
         """
         Create embeddings for the chunks.
@@ -245,11 +214,8 @@ class PDFIndexer:
             if not chunks:
                 return False
             
-            # Add contextual information to chunks
-            enhanced_chunks = self.add_contextual_information(chunks, pages)
-            
             # Create embeddings
-            embeddings, metadata = self.create_embeddings(enhanced_chunks)
+            embeddings, metadata = self.create_embeddings(chunks)
             if embeddings is None or metadata is None:
                 return False
             
