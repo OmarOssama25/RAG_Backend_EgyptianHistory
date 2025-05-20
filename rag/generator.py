@@ -216,36 +216,53 @@ class Generator:
         Returns:
             dict: Response with answer
         """
-        # Format conversation history
-        formatted_history = ""
-        if conversation_history and len(conversation_history) > 0:
-            formatted_history = "Previous conversation:\n"
-            for exchange in conversation_history:
-                role = exchange["role"]
-                content = exchange["content"]
-                if role == "user":
-                    formatted_history += f"Human: {content}\n"
-                else:
-                    formatted_history += f"Assistant: {content}\n"
-            formatted_history += "\n"
-        
-        # Create the prompt
-        prompt = f"""You are a friendly Egyptian history expert assistant. Respond conversationally to the following message.
-        Do not mention documents or searching for information, just respond naturally as in a conversation.
+        try:
+            # Format conversation history
+            formatted_history = ""
+            if conversation_history:
+                if not isinstance(conversation_history, list):
+                    raise ValueError("Conversation history must be a list of dictionaries.")
+                
+                formatted_history = "Previous conversation:\n"
+                for exchange in conversation_history:
+                    if not isinstance(exchange, dict):
+                        raise ValueError("Each conversation history item must be a dictionary.")
+                    
+                    role = exchange.get("role", "unknown").lower()
+                    content = exchange.get("content", "")
+                    if role == "user":
+                        formatted_history += f"Human: {content}\n"
+                    elif role == "assistant":
+                        formatted_history += f"Assistant: {content}\n"
+                    else:
+                        # Unknown role, just add content
+                        formatted_history += f"{content}\n"
+                formatted_history += "\n"
+            
+            # Create the prompt
+            prompt = f"""You are a friendly Egyptian history expert assistant. Respond conversationally to the following message.
+            Do not mention documents or searching for information, just respond naturally as in a conversation.
 
-        {formatted_history}
-        Human: {query}
+            {formatted_history}
+            Human: {query}
 
-        Assistant:"""
-        
-        # Generate response
-        answer = self.llm.generate(prompt)
-        
-        return {
-            "answer": answer,
-            "sources": [],
-            "is_conversational": True
-        }
+            Assistant:"""
+            
+            # Generate response
+            answer = self.llm.generate(prompt)
+            
+            return {
+                "answer": answer,
+                "sources": [],
+                "is_conversational": True
+            }
+        except Exception as e:
+            logger.error(f"Error generating conversational response: {str(e)}", exc_info=True)
+            return {
+                "answer": f"An error occurred: {str(e)}",
+                "sources": [],
+                "is_conversational": True
+            }
     
     def create_enhanced_prompt(self,query, retrieved_documents, chat_history_str=""):
         """
@@ -369,6 +386,10 @@ class Generator:
             formatted_history = ""
             selected_history = []
             if chat_history:
+                if not isinstance(chat_history, list):
+                    logger.warning("Invalid chat history format. Expected a list of dictionaries.")
+                    chat_history = []  # Default to an empty list
+                
                 # Apply window selection to get most relevant messages
                 selected_history = self.window_selection(chat_history)
                 # Format the selected history into a string
@@ -379,7 +400,7 @@ class Generator:
             if intent == "schedule-seeking":
                 return self.generate_schedule_response(query)
             elif intent == "conversational":
-                return self.generate_conversational_response(query, formatted_history)
+                return self.generate_conversational_response(query, selected_history)
             else:
                 # Enhance query with context if we have chat history
                 original_query = query
@@ -429,7 +450,7 @@ class Generator:
                     "enhanced_query": query if query != original_query else None
                 }
         except Exception as e:
-            logger.error(f"Error generating response: {str(e)}")
+            logger.error(f"Error generating response: {str(e)}", exc_info=True)
             return {
                 "answer": f"An error occurred: {str(e)}",
                 "sources": [],
