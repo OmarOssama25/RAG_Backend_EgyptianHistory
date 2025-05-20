@@ -3,6 +3,8 @@ import sys
 import logging
 import numpy as np
 import json
+import pandas as pd
+import re
 from pathlib import Path
 import traceback
 
@@ -10,32 +12,36 @@ import traceback
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.embedding import EmbeddingModel
-from rag.utils import get_vector_store_dir
+from rag.utils import get_vector_store_dir, get_times_dir
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("retriever")
 
 class Retriever:
-    def __init__(self, pdf_name, top_k=5):
+    def __init__(self, pdf_name, times_name=None, top_k=5):
         """
         Initialize the retriever.
         
         Args:
             pdf_name (str): Name of the PDF file (without extension)
+            times_name (str): Name of the times/schedule data file (without extension)
             top_k (int): Number of top results to retrieve
         """
         self.pdf_name = pdf_name
         self.top_k = top_k
+        self.times_name = times_name or "monument_data"
         self.embedding_model = EmbeddingModel()
         self.vector_store_dir = get_vector_store_dir()
+        self.times_dir = get_times_dir()
         
         self.vector_file = os.path.join(self.vector_store_dir, f"{self.pdf_name}_vectors.npz")
         self.metadata_file = os.path.join(self.vector_store_dir, f"{self.pdf_name}_metadata.json")
+        self.times_file = os.path.join(self.times_dir, f"{self.times_name}.csv")
         
         self.embeddings = None
         self.metadata = None
-    
+
     def load_vectors(self):
         """
         Load embeddings and metadata from disk.
@@ -66,13 +72,14 @@ class Retriever:
             logger.error(traceback.format_exc())
             return False
     
-    def search(self, query, top_k=None):
+    def search(self, query, top_k=None, score_thresh=0.2):
         """
         Search for relevant chunks based on the query.
         
         Args:
             query (str): Query text
             top_k (int): Number of top results to retrieve (overrides instance value)
+            score_thresh (float): Minimum similarity score threshold
             
         Returns:
             list: List of relevant chunks with metadata and scores
@@ -104,16 +111,15 @@ class Retriever:
             # Get top k chunks with scores
             results = []
             for i, idx in enumerate(top_indices):
-                # Convert numpy int64 to Python int to avoid JSON serialization issues
                 idx_int = int(idx)
-                
-                # Verify index is within bounds
                 if idx_int >= len(self.metadata):
                     logger.warning(f"Index {idx_int} out of bounds for metadata of length {len(self.metadata)}")
                     continue
                     
                 chunk = self.metadata[idx_int]
                 score = float(similarity_scores[idx])
+                if score < score_thresh:
+                    continue
                 
                 logger.info(f"Result {i+1}: Page {chunk.get('page_num', 'N/A')} with score {score:.4f}")
                 
@@ -128,18 +134,70 @@ class Retriever:
         except Exception as e:
             logger.error(f"Error searching: {str(e)}")
             logger.error(traceback.format_exc())
-            logger.error(f"Query: '{query}'")
-            
-            if self.embeddings is not None:
-                logger.error(f"Embeddings shape: {self.embeddings.shape}")
-            
-            if 'query_embedding' in locals() and query_embedding is not None:
-                logger.error(f"Query embedding shape: {query_embedding.shape}")
-            
-            if 'top_indices' in locals():
-                logger.error(f"Top indices: {top_indices}")
-                
             return []
+
+    def getTimes(self, query=None, city=None):
+        """
+        Get opening hours and location data for Egyptian monuments.
+        
+        Args:
+            query (str, optional): Query text for context or filtering
+            city (str, optional): City name to filter locations
+            
+        Returns:
+            list: List of dictionaries with location and opening hours
+        """
+        try:
+            if not os.path.exists(self.times_file):
+                logger.error(f"Times file not found: {self.times_file}")
+                return []
+                
+            logger.info(f"Loading times data from {self.times_file}")
+            times_data = pd.read_csv(self.times_file)
+            
+            results = []
+            for _, row in times_data.iterrows():
+                location = row.get("Location", "")
+                opening_hours = row.get("Opening Hours", "")
+                
+                # Clean up data
+                location = re.sub(r'[^\w\s,:\-]', '', str(location)).strip()
+                opening_hours = re.sub(r'[^\w\s,:;\-]', '', str(opening_hours)).strip()
+                
+                # Filter by city
+                if city and city.lower() not in location.lower():
+                    continue
+                
+                results.append({
+                    "Location": location,
+                    "Time": opening_hours,
+                    "City": city if city else self._extract_city(location)
+                })
+            
+            logger.info(f"Found {len(results)} timing entries for city: {city}")
+            return results
+        
+        except Exception as e:
+            logger.error(f"Error retrieving times data: {str(e)}")
+            logger.error(traceback.format_exc())
+            return []
+
+    def _extract_city(self, location):
+        """
+        Helper method to extract city from location string.
+        
+        Args:
+            location (str): Location text
+            
+        Returns:
+            str: Extracted city name or empty string
+        """
+        major_cities = ["cairo", "alexandria", "luxor", "aswan", "giza", "hurghada", "sharm el-sheikh"]
+        location_lower = location.lower()
+        for city in major_cities:
+            if city in location_lower:
+                return city
+        return ""
 
 def main():
     if len(sys.argv) < 3:

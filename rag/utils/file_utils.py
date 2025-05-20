@@ -47,6 +47,12 @@ def get_vector_store_dir():
     ensure_directory(vector_dir)
     return vector_dir
 
+def get_times_dir():
+    """Get the times directory path."""
+    times_dir = os.path.join(get_project_root(), "times_places")
+    ensure_directory(times_dir)
+    return times_dir
+
 def chunk_list(lst, batch_size):
     """Split a list into chunks of specified size."""
     return [lst[i:i + batch_size] for i in range(0, len(lst), batch_size)]

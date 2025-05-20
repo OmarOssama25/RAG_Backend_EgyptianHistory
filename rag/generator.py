@@ -18,35 +18,47 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 class Generator:
-    def __init__(self, pdf_name=None):
+    def __init__(self, pdf_name=None, times_name=None):
         """
         Initialize the generator.
         
         Args:
             pdf_name (str): Name of the PDF file (without extension)
+            times_name (str): Name of the times/schedule data file (without extension)
         """
         self.pdf_name = pdf_name or "egyptian_history"
+        self.times_name = times_name or "monument_data"
         self.llm = LLMModel()
-        self.retriever = Retriever(self.pdf_name)
+        self.retriever = Retriever(self.pdf_name, self.times_name)
     
     def classify_intent(self, query):
         """
-        Classify the user query as conversational or information-seeking.
+        Classify the user query as conversational, information-seeking, or schedule-seeking.
         
         Args:
             query (str): User query
             
         Returns:
-            str: "conversational" or "information-seeking"
+            str: "conversational", "information-seeking", or "schedule-seeking".
         """
         classification_prompt = f"""
-        You are an AI assistant designed to classify user messages into exactly ONE of these categories:
-        1. Conversational: Greetings, small talk, personal questions, opinions, etc.
-        2. Information-Seeking: Questions requiring document search or specific knowledge about Egyptian history
+        Task: Classify the user query into exactly ONE category.
         
-        User message: "{query}"
+        Categories:
+        - "conversational": General chat, greetings, small talk, personal questions, opinions
+        - "information-seeking": Questions about Egyptian history, facts, or specific knowledge that requires document search
+        - "schedule-seeking": Requests for visiting schedules, planning a trip, or itinerary suggestions for Egyptian monuments/locations
         
-        Respond with just the category name: either "conversational" or "information-seeking".
+        Examples:
+        - "Hello, how are you?" → "conversational"
+        - "Tell me about Egyptian pyramids" → "information-seeking"
+        - "What's a good schedule for visiting Cairo on Sunday?" → "schedule-seeking"
+        - "Can you help me plan a trip to Alexandria on Tuesday?" → "schedule-seeking"
+        - "When was the Great Pyramid built?" → "information-seeking"
+        
+        User query: "{query}"
+        
+        Classification (respond with exactly one word - conversational, information-seeking, or schedule-seeking):
         """
         
         # Get classification from model
@@ -59,10 +71,140 @@ class Generator:
         if "conversational" in response:
             logger.info(f"Query classified as conversational: {query}")
             return "conversational"
+        elif "schedule-seeking" in response:
+            logger.info(f"Query classified as schedule-seeking: {query}")
+            return "schedule-seeking"
         else:
             logger.info(f"Query classified as information-seeking: {query}")
             return "information-seeking"
     
+    def get_schedule_parameters(self, query):
+        """
+        Extract filter parameters from schedule-seeking query.
+        """
+        parameter_prompt = f"""
+        Extract the following parameters from the user's query about visiting Egyptian monuments or locations:
+        
+        1. City: The Egyptian city mentioned in the query (e.g., Cairo, Alexandria, Luxor, Aswan, Giza)
+        2. Day: The day of the week mentioned (e.g., Monday, Tuesday, etc.)
+        
+        User query: "{query}"
+        
+        Format your response EXACTLY as follows with NO additional text:
+        city=<extracted city>;day=<extracted day>
+        """
+        
+        response = self.llm.generate(parameter_prompt, max_tokens=50).strip()
+        
+        # Parse response
+        try:
+            params = {}
+            for pair in response.split(";"):
+                if "=" in pair:
+                    key, value = pair.split("=", 1)
+                    params[key.strip().lower()] = value.strip().lower()
+            
+            # Validate required parameters
+            if "city" not in params or not params["city"]:
+                return {"error": "missing_city"}
+            if "day" not in params or not params["day"]:
+                params["day"] = "thursday"  # Default to Thursday if day is missing
+            
+            logger.info(f"Extracted parameters: {params}")
+            return params
+        except Exception as e:
+            logger.error(f"Error parsing parameters: {str(e)}")
+            return {"error": "invalid_format"}
+    
+    def generate_schedule_response(self, query):
+        """
+        Generate a schedule response for Egyptian monument visits.
+        
+        Args:
+            query (str): User query
+            
+        Returns:
+            dict: Response with schedule information or error
+        """
+        try:
+            # Step 1: Extract parameters from query
+            parameters = self.get_schedule_parameters(query)
+            
+            # Step 2: Handle parameter errors
+            if "error" in parameters:
+                if parameters["error"] == "missing_city":
+                    return {
+                        "answer": "I need to know which Egyptian city you want to visit. Could you specify the city?",
+                        "query_type": "schedule-seeking",
+                    }
+                elif parameters["error"] == "invalid_format":
+                    return {
+                        "answer": "I couldn't understand your request. Please specify which Egyptian city and day you want to visit.",
+                        "query_type": "schedule-seeking",
+                    }
+        
+            # Step 3: Get relevant location data from the retriever
+            results = self.retriever.getTimes(query, parameters["city"])
+            
+            logger.info(f"Retrieved times data: {results}")
+            
+            if not results or len(results) == 0:
+                return {
+                    "answer": f"I don't have information about monuments or locations in {parameters['city']}. Could you try another Egyptian city?",
+                    "query_type": "schedule-seeking"
+                }
+            
+            # Step 4: Create an optimized schedule using extracted parameters and location data
+            schedule_prompt = f"""
+            Create a detailed one-day tour schedule for visiting monuments in {parameters['city']} on {parameters['day']}.
+
+            Available locations and their opening hours:
+            {json.dumps([{
+                "location": item["Location"],
+                "hours": item["Time"]
+            } for item in results], indent=2)}
+
+            Guidelines:
+            1. Start the day at 8:00 AM and end by 6:00 PM.
+            2. Include 3-5 major attractions based on proximity and importance.
+            3. Allocate realistic visiting times for each location (1-2 hours).
+            4. Include travel time between locations (15-30 minutes).
+            5. Add a lunch break around noon (1 hour).
+            6. Ensure the schedule respects the opening hours of each location.
+            7. Use a friendly and conversational tone, as if you're a tour guide.
+
+            Format your response as a complete schedule with times, locations, and brief descriptions. Example:
+
+            8:00 AM - 9:30 AM: Visit Karnak Temple. Explore the largest religious structure ever built, with its towering columns and intricate carvings.
+            9:30 AM - 10:00 AM: Travel to Luxor Temple.
+            10:00 AM - 11:30 AM: Visit Luxor Temple. Admire its elegant architecture and the Avenue of Sphinxes.
+            """
+            
+            # Generate the schedule
+            logger.info(f"Schedule prompt sent to LLM:\n{schedule_prompt}")
+            schedule_response = self.llm.generate(schedule_prompt)
+            logger.info(f"Schedule response from LLM:\n{schedule_response}")
+            
+            if not schedule_response or not schedule_response.strip():
+                return {
+                    "answer": "I couldn't generate a schedule at this time. Please try again later.",
+                    "query_type": "schedule-seeking"
+                }
+            
+            return {
+                "answer": schedule_response,
+                "city": parameters["city"],
+                "day": parameters["day"],
+                "query_type": "schedule-seeking"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating schedule: {str(e)}", exc_info=True)
+            return {
+                "answer": f"An error occurred while creating the schedule: {str(e)}",
+                "query_type": "schedule-seeking"
+            }
+
     def generate_conversational_response(self, query, conversation_history=None):
         """
         Generate a conversational response without document retrieval.
@@ -149,8 +291,7 @@ class Generator:
     5. Your response must be clearly connected to the retrieved documents
     6. Include important additional context that helps understanding, even if not directly asked
     7. Answer in a conversational, engaging tone
-    8. Cite specific document numbers and page numbers when referencing facts
-    9. If the information to answer the query is not in the documents, state this clearly instead of inventing facts
+    8. If the information to answer the query is not in the documents, state this clearly instead of inventing facts
 
     Respond with a comprehensive answer based on the above instructions:
     """
@@ -235,7 +376,9 @@ class Generator:
                 logger.info(f"Processed {len(selected_history)} messages from chat history")
             
             # Generate appropriate response based on intent
-            if intent == "conversational":
+            if intent == "schedule-seeking":
+                return self.generate_schedule_response(query)
+            elif intent == "conversational":
                 return self.generate_conversational_response(query, formatted_history)
             else:
                 # Enhance query with context if we have chat history
@@ -470,12 +613,13 @@ def main():
     parser = argparse.ArgumentParser(description="Generate a response to a query using RAG")
     parser.add_argument("query", help="User query")
     parser.add_argument("--pdf-name", help="Name of the PDF file (without extension)")
+    parser.add_argument("--times-name", help="Name of the file containing the time database (without extension)")
     parser.add_argument("--top-k", type=int, default=5, help="Number of top results to retrieve")
     parser.add_argument("--conversation-history", help="JSON string of conversation history")
     
     args = parser.parse_args()
     
-    generator = Generator(pdf_name=args.pdf_name)
+    generator = Generator(pdf_name=args.pdf_name, times_name=args.times_name)
     
     # Parse conversation history if provided
     conversation_history = None
