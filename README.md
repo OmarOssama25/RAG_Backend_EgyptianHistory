@@ -9,6 +9,8 @@ A Retrieval-Augmented Generation (RAG) system for querying large Egyptian histor
 - **Large PDF Handling**: Optimized for 1000+ page documents
 - **Source Citation**: Provides references back to original document pages
 - **Persistent Indexing**: Vector store maintains indexed documents between sessions
+- **User Authentication**: Secure JWT-based authentication with email verification
+- **Chat History Management**: Persistent conversation tracking with MongoDB
 
 ## System Architecture
 
@@ -68,7 +70,6 @@ The diagram shows:
     ```
 
 4. **Install MongoDB**
-
     - **Windows:** Download and install from [MongoDB Community Download](https://www.mongodb.com/try/download/community)
     - **Mac (Homebrew):**
         ```
@@ -112,6 +113,10 @@ The diagram shows:
     NODE_PORT=5000
     MONGODB_URI=mongodb://localhost:27017/egyptian_history_rag
     JWT_SECRET=your_random_secure_jwt_secret
+    EMAIL_SERVICE=smtp.ethereal.email
+    EMAIL_USER=your_email@example.com
+    EMAIL_PASSWORD=your_email_password
+    EMAIL_FROM=no-reply@egyptianhistory.com
     ```
 
 8. **Verify MongoDB Connection**
@@ -122,11 +127,6 @@ The diagram shows:
       mongosh "mongodb://localhost:27017/egyptian_history_rag"
       show dbs
       ```
-
----
-
-Now you are ready to [run the system](#running-the-system).
-
 
 ## Running the System
 
@@ -151,23 +151,75 @@ The main API will be available at `http://localhost:5000`
 
 ## API Endpoints
 
-### Main API (Node.js)
+### Authentication API
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/upload` | POST | Upload a PDF document |
-| `/api/index` | POST | Index the uploaded document |
-| `/api/query` | POST | Submit a query (`{"query": "your question"}`) |
-| `/api/status` | GET | Check indexing status |
+| Endpoint | Method | Description | Request Body |
+|----------|--------|-------------|-------------|
+| `/api/auth/signup` | POST | Register a new user | `{"email": "user@example.com", "password": "SecurePassword123"}` |
+| `/api/auth/verify/{token}` | GET | Verify user email address | N/A |
+| `/api/auth/login` | POST | Login with credentials | `{"email": "user@example.com", "password": "SecurePassword123"}` |
 
-### Model Services (Flask)
+### Chat/Conversation API
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/llm` | POST | Generate responses (`{"prompt": "your prompt"}`) |
-| `/embed` | POST | Create embeddings (`{"text": "your text"}`) |
+| Endpoint | Method | Description | Request Body |
+|----------|--------|-------------|-------------|
+| `/api/chat/conversations` | POST | Create new conversation | `{"title": "Egyptian Pyramids", "message": "Tell me about the Great Pyramid of Giza"}` |
+| `/api/chat/conversations` | GET | List all user conversations | N/A |
+| `/api/chat/conversations/{id}` | GET | Get specific conversation with messages | N/A |
+| `/api/chat/conversations/{id}/messages` | POST | Add message to conversation | `{"role": "user", "content": "Tell me more about Giza"}` |
+| `/api/chat/conversations/{id}/permanent` | DELETE | Delete conversation permanently | N/A |
 
-## Usage Example
+### RAG System API
+
+| Endpoint | Method | Description | Request Body |
+|----------|--------|-------------|-------------|
+| `/api/upload` | POST | Upload a PDF document | Form data with `pdf` file |
+| `/api/index` | POST | Index the uploaded document | `{"filename": "egyptian_history.pdf"}` |
+| `/api/status` | GET | Check indexing status | N/A |
+| `/api/query` | POST | Submit a query | `{"query": "What do you know about Alexandria?", "conversationId": "id"}` |
+
+### Model Services API (Flask)
+
+| Endpoint | Method | Description | Request Body |
+|----------|--------|-------------|-------------|
+| `/llm` | POST | Generate responses | `{"prompt": "your prompt"}` |
+| `/embed` | POST | Create embeddings | `{"text": "your text"}` |
+
+## Authentication Details
+
+The system uses JWT (JSON Web Tokens) for authentication:
+
+- **Token Format**: Bearer token in Authorization header
+- **Token Lifespan**: 7 days by default (configurable in `.env`)
+- **Email Verification**: Required before login is permitted
+- **Password Requirements**: Minimum 8 characters with numbers and letters
+
+Example authentication header:
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+## Usage Examples
+
+### Authentication Flow
+
+1. **Register a new user**:
+```
+curl -X POST -H "Content-Type: application/json" -d '{"email": "user@example.com", "password": "SecurePassword123"}' http://localhost:5000/api/auth/signup
+```
+
+2. **Verify email** (link sent to user's email):
+```
+# User clicks verification link or you can test with:
+curl -X GET http://localhost:5000/api/auth/verify/{verification_token}
+```
+
+3. **Login to get JWT token**:
+```
+curl -X POST -H "Content-Type: application/json" -d '{"email": "user@example.com", "password": "SecurePassword123"}' http://localhost:5000/api/auth/login
+```
+
+### RAG System Usage
 
 1. **Upload your Egyptian history PDF**:
 ```
@@ -176,25 +228,44 @@ curl -X POST -F "pdf=@path/to/document.pdf" http://localhost:5000/api/upload
 
 2. **Index the document**:
 ```
-curl -X POST http://localhost:5000/api/index
+curl -X POST -H "Content-Type: application/json" -d '{"filename": "egyptian_history.pdf"}' http://localhost:5000/api/index
 ```
+
 3. **Query the system**:
 ```
 curl -X POST -H "Content-Type: application/json" -d '{"query":"Who built the Great Pyramid of Giza?"}' http://localhost:5000/api/query
+```
+
+### Chat System Usage
+
+1. **Create a new conversation**:
+```
+curl -X POST -H "Content-Type: application/json" -H "Authorization: Bearer YOUR_TOKEN" -d '{"title": "Egyptian Pyramids", "message": "Tell me about the Great Pyramid of Giza"}' http://localhost:5000/api/chat/conversations
+```
+
+2. **Get all conversations**:
+```
+curl -X GET -H "Authorization: Bearer YOUR_TOKEN" http://localhost:5000/api/chat/conversations
+```
+
+3. **Add message to conversation**:
+```
+curl -X POST -H "Content-Type: application/json" -H "Authorization: Bearer YOUR_TOKEN" -d '{"role": "user", "content": "Tell me more about hieroglyphics"}' http://localhost:5000/api/chat/conversations/{conversation_id}/messages
 ```
 
 ## Configuration Options
 
 Modify `config.json` to adjust system behavior:
 ```
-
 {
-"chunk_size": 500,
-"chunk_overlap": 100,
-"top_k": 5,
-"temperature": 0.7,
-"embedding_batch_size": 32,
-"max_tokens": 1024
+  "chunk_size": 500,
+  "chunk_overlap": 100,
+  "top_k": 5,
+  "temperature": 0.7,
+  "embedding_batch_size": 32,
+  "max_tokens": 1024,
+  "jwt_expiration": "7d",
+  "verification_expiry": "24h"
 }
 ```
 
@@ -216,57 +287,11 @@ Modify `config.json` to adjust system behavior:
 4. **CUDA Out of Memory**:
    - Restart the Flask service to clear memory
    - Reduce batch sizes in config
-  
 
-
-## New Features and Enhancements
-
-### Node.js Backend & Database Connection
-We introduced a Node.js backend with a MongoDB database to support persistent chat history.
-
-#### Database Connection
-- **File:** `backend/config/database.js`  
-- **Description:** Handles MongoDB connection using Mongoose. Reads the connection string from `.env` (variable: `MONGODB_URI`).
-
-#### Backend Structure
-- `server.js`: Main entry point (sets up middleware, connects MongoDB, mounts routes)
-- `routes/api.js`: Core RAG endpoints (PDF upload, indexing, querying)
-- `controllers/ragController.js`: Business logic for RAG operations
-
----
-
-### Chat History (Node.js & MongoDB)
-Persistent conversation tracking with MongoDB:
-
-#### Models
-- `backend/models/conversation.js`  
-  Stores chat sessions with: user reference, title, timestamps, active status
-- `backend/models/message.js`  
-  Stores messages with: conversation link, role, content, timestamp, metadata
-
-#### Controllers
-- `backend/controllers/chatController.js`  
-  Handles: conversation creation, message addition, history retrieval, updates, soft deletion
-
-#### Middleware
-- `backend/middleware/auth.js`  
-  *(Optional placeholder for future authentication)*
-
-#### Routes
-- `backend/routes/chat.js`  
-  Endpoints for conversation lifecycle management
-
-#### Example Endpoints
-| Endpoint                          | Method | Description                          |
-|-----------------------------------|--------|--------------------------------------|
-| `/api/chat/conversations`         | POST   | Create new conversation              |
-| `/api/chat/conversations`         | GET    | List all conversations               |
-| `/api/chat/conversations/:id`     | GET    | Get conversation + messages          |
-| `/api/chat/conversations/:id/messages` | POST | Add message to conversation |
-| `/api/chat/conversations/:id`     | PUT    | Update conversation details          |
-| `/api/chat/conversations/:id`     | DELETE | Soft-delete conversation             |
-
-
+5. **Authentication Issues**:
+   - Check that JWT_SECRET is properly set in .env
+   - Verify email verification process is working
+   - Ensure token is being passed correctly in Authorization header
 
 ## Project Structure
 ```
@@ -275,7 +300,7 @@ RAG_Backend_EgyptianHistory/
 │   ├── config/
 │   │   └── database.js                # MongoDB connection setup
 │   ├── controllers/
-│   │   ├── authController.js          # Signup, login, (optional: verification)
+│   │   ├── authController.js          # Signup, login, verification
 │   │   ├── chatController.js          # Chat history logic
 │   │   └── ragController.js           # RAG business logic (PDF, query, index)
 │   ├── middleware/
@@ -309,9 +334,18 @@ RAG_Backend_EgyptianHistory/
 ├── package.json                       # Node.js dependencies & scripts
 ├── README.md                          # Project documentation
 └── .gitignore                         # Files/folders to ignore in git
-
 ```
 
+## License
+
+MIT License - See [LICENSE](LICENSE) for details.
+
+Citations:
+[1] https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/29393552/9384ba24-2c67-4c12-ba5f-3d6a94424585/Egyptian-History-RAG-API.postman_collection.json
+[2] https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/29393552/393138e2-85cf-4a73-9fea-a4a06c1b54c1/README.md
+
+---
+Answer from Perplexity: pplx.ai/share
 
 ## License
 
