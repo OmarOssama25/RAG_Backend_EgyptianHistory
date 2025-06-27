@@ -21,7 +21,7 @@ exports.signup = async (req, res) => {
     res.status(201).json({ 
       message: 'Signup successful. Account automatically verified for development.',
       // Optionally return a token so they can login immediately
-      token: jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' })
+      token: jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '30d' })
     });
   } catch (err) {
     res.status(500).json({ message: 'Signup failed.', error: err.message });
