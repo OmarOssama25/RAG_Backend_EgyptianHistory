@@ -264,21 +264,12 @@ class Generator:
                 "is_conversational": True
             }
     
-    def create_enhanced_prompt(self,query, retrieved_documents, chat_history_str=""):
+    def create_enhanced_prompt(self, query, retrieved_documents, chat_history_str=""):
         """
         Create an enhanced prompt template that includes chat history and retrieved documents.
-        
-        Args:
-            query (str): The current user query
-            retrieved_documents (list): List of retrieved document chunks with text and metadata
-            chat_history_str (str): Formatted chat history string
-            
-        Returns:
-            str: Complete prompt for the LLM
         """
         # System instructions
-        system_instructions = """You are an expert on Egyptian history providing accurate, detailed answers based on verified historical documents. 
-    Your responses should be informative, factual, and cite the specific sources from the provided context."""
+        system_instructions = """You are an expert on Egyptian history. Provide accurate, detailed, and engaging answers using the provided documents and your own knowledge as needed. Your response should be informative, vivid, and suitable for a curious audience. Do not mention sources or differentiate between document content and your own knowledge. Respond in the same language as the user's query."""
 
         # Format document context
         document_context = ""
@@ -289,29 +280,26 @@ class Generator:
 
         # Construct full prompt with clear separators
         prompt = f"""
-    {system_instructions}
+{system_instructions}
 
-    {'' if not chat_history_str else f'''=== PREVIOUS CONVERSATION ===
-    {chat_history_str}
+{'' if not chat_history_str else f'''=== PREVIOUS CONVERSATION ===
+{chat_history_str}
 
-    '''}=== RETRIEVED CONTEXT ===
-    {document_context}
+'''}=== RETRIEVED CONTEXT ===
+{document_context}
 
-    === CURRENT QUERY ===
-    {query}
+=== CURRENT QUERY ===
+{query}
 
-    === INSTRUCTIONS ===
-    1. First, carefully read the retrieved context above
-    2. Compare retrieved information with any context from previous conversation
-    3. Verify all facts against the provided documents before including them
-    4. If information seems contradictory, prioritize the most reliable source and explain discrepancies
-    5. Your response must be clearly connected to the retrieved documents
-    6. Include important additional context that helps understanding, even if not directly asked
-    7. Answer in a conversational, engaging tone
-    8. If the information to answer the query is not in the documents, state this clearly instead of inventing facts
+=== INSTRUCTIONS ===
+1. Use the retrieved context and your own knowledge to provide a comprehensive, engaging answer.
+2. Do not mention sources, citations, or differentiate between document content and your own knowledge.
+3. Answer in a conversational, engaging tone suitable for a curious audience.
+4. If the information to answer the query is not available, say so clearly.
+5. Respond in the same language as the user's query.
 
-    Respond with a comprehensive answer based on the above instructions:
-    """
+Respond with a comprehensive answer:
+"""
 
         return prompt
 
@@ -558,7 +546,7 @@ class Generator:
         # Join messages with newlines
         return '\n'.join(formatted_messages)
     
-    def window_selection(self,chat_history, max_turns=3, max_tokens=1000):
+    def window_selection(self,chat_history, max_turns=3, max_tokens=10000):
         """
         Select the most relevant conversation history using a sliding window approach.
         
