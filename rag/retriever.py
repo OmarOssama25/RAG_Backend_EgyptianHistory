@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("retriever")
 
 class Retriever:
-    def __init__(self, pdf_name, times_name=None, top_k=5):
+    def __init__(self, pdf_name, times_name=None, top_k=10):
         """
         Initialize the retriever.
         
@@ -72,7 +72,7 @@ class Retriever:
             logger.error(traceback.format_exc())
             return False
     
-    def search(self, query, top_k=None, score_thresh=0.2):
+    def search(self, query, top_k=10, score_thresh=0.2):
         """
         Search for relevant chunks based on the query.
         

@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const connectDB = async () => {
   try {
-    const mongoURI = 'mongodb://localhost:27017'; // Direct string instead of env var
+    const mongoURI = 'mongodb://localhost:27017/test'; // Direct string instead of env var
     await mongoose.connect(mongoURI);
     console.log('MongoDB connected');
   } catch (err) {

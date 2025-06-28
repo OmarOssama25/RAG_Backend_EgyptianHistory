@@ -85,8 +85,13 @@ class Generator:
         parameter_prompt = f"""
         Extract the following parameters from the user's query about visiting Egyptian monuments or locations:
         
-        1. City: The Egyptian city mentioned in the query (e.g., Cairo, Alexandria, Luxor, Aswan, Giza)
+        1. City: The Egyptian city mentioned in the query (e.g., Cairo, Alexandria, Luxor, Aswan, Giza). If the extracted city is not in Egypt, respond with not_in_egypt for city name.
         2. Day: The day of the week mentioned (e.g., Monday, Tuesday, etc.)
+
+        Instructions:
+        1.If the extracted city is not in Egypt, respond with not_in_egypt for city name.
+        2.If a city name is not found in the query, repsond with missing_city for city name.
+
         
         User query: "{query}"
         
@@ -108,7 +113,12 @@ class Generator:
             if "city" not in params or not params["city"]:
                 return {"error": "missing_city"}
             if "day" not in params or not params["day"]:
-                params["day"] = "thursday"  # Default to Thursday if day is missing
+                params["day"] = "friday"  # Default to friday(weekend) if day is missing
+            
+            if params["city"] == "not_in_egypt":
+                return{"error": "not_in_egypt"}
+            if params["city"] == "missing_city":
+                return{"error": "missing_city"}
             
             logger.info(f"Extracted parameters: {params}")
             return params
@@ -116,7 +126,7 @@ class Generator:
             logger.error(f"Error parsing parameters: {str(e)}")
             return {"error": "invalid_format"}
     
-    def generate_schedule_response(self, query):
+    def generate_schedule_response(self, query, max_tokens= 1024, extracted_parameters= {"error": "invalid_format"}, chat_history_str=""):
         """
         Generate a schedule response for Egyptian monument visits.
         
@@ -128,7 +138,7 @@ class Generator:
         """
         try:
             # Step 1: Extract parameters from query
-            parameters = self.get_schedule_parameters(query)
+            parameters = extracted_parameters
             
             # Step 2: Handle parameter errors
             if "error" in parameters:
@@ -142,11 +152,16 @@ class Generator:
                         "answer": "I couldn't understand your request. Please specify which Egyptian city and day you want to visit.",
                         "query_type": "schedule-seeking",
                     }
+                elif parameters["error"] == "not_in_egypt":
+                    return {
+                        "answer": "I apologize. I am only able to create schedules for cities in the country of Egypt.",
+                        "query_type": "schedule-seeking",
+                    }
         
             # Step 3: Get relevant location data from the retriever
             results = self.retriever.getTimes(query, parameters["city"])
             
-            logger.info(f"Retrieved times data: {results}")
+            #logger.info(f"Retrieved times data: {results}")
             
             if not results or len(results) == 0:
                 return {
@@ -157,6 +172,9 @@ class Generator:
             # Step 4: Create an optimized schedule using extracted parameters and location data
             schedule_prompt = f"""
             Create a detailed one-day tour schedule for visiting monuments in {parameters['city']} on {parameters['day']}.
+
+            {'' if not chat_history_str else f'''=== PREVIOUS CONVERSATION ==
+            {chat_history_str}'''}
 
             Available locations and their opening hours:
             {json.dumps([{
@@ -172,17 +190,20 @@ class Generator:
             5. Add a lunch break around noon (1 hour).
             6. Ensure the schedule respects the opening hours of each location.
             7. Use a friendly and conversational tone, as if you're a tour guide.
+            8. Limit your response to a max token value of {max_tokens}
 
             Format your response as a complete schedule with times, locations, and brief descriptions. Example:
 
             8:00 AM - 9:30 AM: Visit Karnak Temple. Explore the largest religious structure ever built, with its towering columns and intricate carvings.
             9:30 AM - 10:00 AM: Travel to Luxor Temple.
             10:00 AM - 11:30 AM: Visit Luxor Temple. Admire its elegant architecture and the Avenue of Sphinxes.
+
+            User Query: {query}
             """
             
             # Generate the schedule
-            logger.info(f"Schedule prompt sent to LLM:\n{schedule_prompt}")
-            schedule_response = self.llm.generate(schedule_prompt)
+            #logger.info(f"Schedule prompt sent to LLM:\n{schedule_prompt}")
+            schedule_response = self.llm.generate(schedule_prompt, max_tokens= max_tokens)
             logger.info(f"Schedule response from LLM:\n{schedule_response}")
             
             if not schedule_response or not schedule_response.strip():
@@ -296,7 +317,7 @@ class Generator:
 2. Do not mention sources, citations, or differentiate between document content and your own knowledge.
 3. Answer in a conversational, engaging tone suitable for a curious audience.
 4. If the information to answer the query is not available, say so clearly.
-5. Respond in the same language as the user's query.
+5. Respond in the same language as the user's query by default. If the user specifies a specific language for response, follow their instruction as long as you are capable of using that language. 
 
 Respond with a comprehensive answer:
 """
@@ -304,7 +325,7 @@ Respond with a comprehensive answer:
         return prompt
 
     
-    def generate_information_response(self, query, top_k=5):
+    def generate_information_response(self, query, top_k=10):
         """
         Generate a response to the query using RAG.
         
@@ -354,7 +375,7 @@ Respond with a comprehensive answer:
                 "is_conversational": False
             }
             
-    def generate_response(self, query, top_k=5, chat_history=None):
+    def generate_response(self, query, top_k=10, chat_history=None):
         """
         Generate a response using the RAG pipeline with chat history and query enhancement.
         
@@ -369,6 +390,7 @@ Respond with a comprehensive answer:
         try:
             # Classify the query intent
             intent = self.classify_intent(query)
+            #logger.info(f"Extracted History: {chat_history}")
             
             # Process chat history if provided
             formatted_history = ""
@@ -386,7 +408,13 @@ Respond with a comprehensive answer:
             
             # Generate appropriate response based on intent
             if intent == "schedule-seeking":
-                return self.generate_schedule_response(query)
+                original_query= query
+                params= self.get_schedule_parameters(original_query)
+                if chat_history and len(selected_history) > 0:
+                    query = self.enhance_query_with_context(original_query, selected_history, self.llm)
+                    logger.info(f"Enhanced query: '{original_query}' → '{query}'")
+
+                return self.generate_schedule_response(query, extracted_parameters = params, chat_history_str = formatted_history)
             elif intent == "conversational":
                 return self.generate_conversational_response(query, selected_history)
             else:

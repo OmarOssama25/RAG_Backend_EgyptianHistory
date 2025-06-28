@@ -84,7 +84,7 @@ def query():
             }), 400
         
         query_text = data['query']
-        top_k = data.get('top_k', 5)
+        top_k = data.get('top_k', 10)
         chat_history = data.get('chat_history', [])
         
         # Generate response with chat history
