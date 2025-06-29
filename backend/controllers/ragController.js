@@ -271,22 +271,43 @@ exports.queryRag = async (req, res) => {
           if (!conversation) {
             console.warn(`Conversation ${conversationId} not found, cannot save messages`);
           } else {
-            await Message.create({
+            const existingUserMessage = await Message.findOne({
               conversationId,
               role: 'user',
               content: queryText
-            });
+            }).sort({ timestamp: -1 });
 
-            await Message.create({
+            if (!existingUserMessage) {
+              await Message.create({
+                conversationId,
+                role: 'user',
+                content: queryText
+              });
+            }
+
+            console.log('Skipping saving duplicate user message in /query');
+
+
+            const lastAssistantMessage = await Message.findOne({
               conversationId,
               role: 'assistant',
-              content: plainTextAnswer,
-              metadata: {
-                sources: sources,
-                enhanced_query: enhancedQuery,
-                original_query: originalQuery
-              }
-            });
+              content: plainTextAnswer
+            }).sort({ timestamp: -1 });
+
+            if (!lastAssistantMessage) {
+              await Message.create({
+                conversationId,
+                role: 'assistant',
+                content: plainTextAnswer,
+                metadata: {
+                  sources: sources,
+                  enhanced_query: enhancedQuery,
+                  original_query: originalQuery
+                }
+              });
+            } else {
+              console.log('Skipping duplicate assistant message save');
+            }
 
             conversation.updatedAt = Date.now();
             await conversation.save();

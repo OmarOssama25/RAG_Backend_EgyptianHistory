@@ -191,6 +191,7 @@ class Generator:
             6. Ensure the schedule respects the opening hours of each location.
             7. Use a friendly and conversational tone, as if you're a tour guide.
             8. Limit your response to a max token value of {max_tokens}
+            9. Don't utilize special characters in your response. Respond as if you are chatting normally.
 
             Format your response as a complete schedule with times, locations, and brief descriptions. Example:
 
